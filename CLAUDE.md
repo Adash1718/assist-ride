@@ -81,7 +81,8 @@ the app by phase/role rather than by feature:
   forms.
 
 **Live matching / RLS shape** (see migration comments for the full reasoning
-trail — 0002 → 0005 fixed each other's bugs, worth reading in order):
+trail — 0002 → 0006 fixed each other's bugs, worth reading in order; note
+0005's diagnosis turned out to be wrong, 0006 explains the real cause):
 - A driver's availability is a persisted column
   (`driver_profiles.is_available`), not just local state.
 - `ride_requests` uses Postgres Realtime; drivers subscribe to see new
@@ -92,13 +93,21 @@ trail — 0002 → 0005 fixed each other's bugs, worth reading in order):
   caused infinite RLS recursion (42P17); the function breaks that cycle.
 - Declines are tracked in a `declined_driver_ids` uuid array, appended via
   an atomic RPC (`decline_ride_request`) rather than read-modify-write, to
-  avoid a race between concurrent decliners on the same ride.
-- When a table has multiple `UPDATE` policies that can match the same row
-  (e.g. "claim" and "decline" on the same `requested` row), Postgres
-  requires the new row to satisfy **every** matching policy's own
-  `WITH CHECK`, not just one — a recurring gotcha in this schema (see
-  0005's comment). Prefer `alter policy ... with check (...)` to widen an
-  existing check over adding a new, possibly-conflicting policy.
+  avoid a race between concurrent decliners on the same ride. The RPC is
+  `SECURITY DEFINER` with its own auth checks (0006) — it can't be a plain
+  RLS-governed UPDATE, see next point.
+- RLS gotcha that bit this schema: when an `UPDATE` reads the table's
+  columns (a `WHERE`/`RETURNING`), Postgres also requires the **updated row
+  to still pass the table's SELECT policies**, and raises 42501 ("new row
+  violates row-level security policy") if it doesn't. So an update that
+  makes a row invisible to its own writer (e.g. a driver adding themselves
+  to `declined_driver_ids`, which the SELECT policy hides) can never work
+  through RLS — use a `SECURITY DEFINER` function for it instead. (Multiple
+  permissive policies' `WITH CHECK`s are simply ORed; 0005 assumed
+  otherwise and changed nothing.)
+- An `UPDATE` that matches zero rows (lost race, RLS-filtered) is **not** an
+  error from PostgREST — chain `.select()` and check the returned rows when
+  success matters (see `acceptRideRequest`).
 
 **Session storage note**: Supabase auth persists sessions via
 `AsyncStorage`, which on web is backed by the browser's `localStorage` —

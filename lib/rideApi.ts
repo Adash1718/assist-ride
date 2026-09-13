@@ -113,13 +113,20 @@ export async function fetchRideRequest(id: string): Promise<{ data: RideRequestD
   return { data: data ? mapRow(data) : null, error: null };
 }
 
+// Loses the race gracefully if the ride is no longer open (another driver
+// claimed it, or the rider cancelled) — but an UPDATE that matches zero rows
+// is not an error to PostgREST, so success has to be confirmed by getting
+// the claimed row back, not just by the absence of an error.
 export async function acceptRideRequest(rideId: string, driverId: string): Promise<{ error: string | null }> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('ride_requests')
     .update({ status: 'matched', matched_driver_id: driverId, updated_at: new Date().toISOString() })
     .eq('id', rideId)
-    .eq('status', 'requested'); // loses the race gracefully if another driver already claimed it
-  return { error: error?.message ?? null };
+    .eq('status', 'requested')
+    .select('id');
+  if (error) return { error: error.message };
+  if (!data || data.length === 0) return { error: 'This ride is no longer available.' };
+  return { error: null };
 }
 
 // Marks this ride as declined by this driver (ride stays 'requested' for

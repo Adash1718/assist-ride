@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { router } from 'expo-router';
 import { Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -15,6 +15,13 @@ export default function DriverHome() {
   const { driver, setDriver } = useProfiles();
   const { session, loading, signOut } = useAuth();
   const [available, setAvailable] = useState(false);
+  // What the database has confirmed, as opposed to what the toggle shows.
+  // Matching must key off this one: RLS decides which open rides the
+  // catch-up fetch can see from the persisted is_available column, so
+  // fetching the instant the toggle flips (before the write lands) comes
+  // back empty and silently misses any ride that was already waiting.
+  const [confirmedAvailable, setConfirmedAvailable] = useState(false);
+  const latestToggle = useRef(false);
   const [checking, setChecking] = useState(true);
 
   const userId = session?.user?.id;
@@ -48,14 +55,27 @@ export default function DriverHome() {
         router.replace('/(onboarding)/driver');
         return;
       }
-      setAvailable(data?.isAvailable ?? false);
+      const isAvailable = data?.isAvailable ?? false;
+      latestToggle.current = isAvailable;
+      setAvailable(isAvailable);
+      setConfirmedAvailable(isAvailable); // read straight from the DB, so already persisted
       setChecking(false);
     })();
   }, [loading, userId]);
 
   async function toggleAvailable(next: boolean) {
-    setAvailable(next); // optimistic — this is the driver's own toggle, not a shared resource
-    if (userId) await setDriverAvailability(userId, next);
+    latestToggle.current = next;
+    setAvailable(next); // optimistic for the toggle itself
+    if (!next) setConfirmedAvailable(false); // stop matching immediately when going offline
+    if (!userId) return;
+    const { error } = await setDriverAvailability(userId, next);
+    if (latestToggle.current !== next) return; // toggled again while this write was in flight
+    if (error) {
+      setAvailable(!next);
+      latestToggle.current = !next;
+      return;
+    }
+    if (next) setConfirmedAvailable(true);
   }
 
   // Real matching: while available, (a) catch up on any ride that was
@@ -68,7 +88,7 @@ export default function DriverHome() {
   // ever surfaces a ride genuinely still up for grabs (see SPEC.md for
   // capability-tag filtering as a documented next step).
   useEffect(() => {
-    if (!available) return;
+    if (!confirmedAvailable) return;
     let cancelled = false;
     (async () => {
       const { data } = await fetchOldestOpenRequest();
@@ -83,7 +103,7 @@ export default function DriverHome() {
       cancelled = true;
       unsubscribe();
     };
-  }, [available]);
+  }, [confirmedAvailable]);
 
   if (checking) return null;
 

@@ -64,9 +64,10 @@ export default function DriverIncoming() {
     const { error: err } = await acceptRideRequest(rideId, user.id);
     setResponding(false);
     if (err) {
-      // Most likely another driver claimed it first — see SPEC.md, no
-      // reassignment loop yet, so just send this driver back to waiting.
-      setError('This ride was just taken by another driver.');
+      // Another driver claimed it first or the rider cancelled — either way
+      // it's gone, so send this driver back to waiting (Driver Home's
+      // catch-up fetch will surface the next open ride, if any).
+      setError('This ride is no longer available.');
       setTimeout(() => router.replace('/(driver)/driver-home'), 1500);
       return;
     }
@@ -74,7 +75,17 @@ export default function DriverIncoming() {
   }
 
   async function handleDecline() {
-    if (rideId && user) await declineRideRequest(rideId, user.id);
+    if (!rideId || !user) return;
+    setResponding(true);
+    setError(null);
+    const { error: err } = await declineRideRequest(rideId, user.id);
+    setResponding(false);
+    if (err) {
+      // Stay here rather than going back — an unrecorded decline means Driver
+      // Home's catch-up fetch would just re-show this same ride.
+      setError("Couldn't decline this ride. Please try again.");
+      return;
+    }
     router.replace('/(driver)/driver-home');
   }
 
