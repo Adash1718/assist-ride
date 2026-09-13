@@ -1,11 +1,12 @@
-import { useState } from 'react';
-import { router } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing } from '../../constants/theme';
 import { Card, Divider, Hint, PrimaryButton, Screen, SectionLabel } from '../../components/ui';
 import { CheckIcon, StarIcon } from '../../components/Icon';
 import { useProfiles } from '../../contexts/ProfileContext';
+import { fetchRideRequest, RideRequestData } from '../../lib/rideApi';
 
 function StarRow({ value, onChange, size = 16 }: { value: number; onChange: (v: number) => void; size?: number }) {
   return (
@@ -19,14 +20,27 @@ function StarRow({ value, onChange, size = 16 }: { value: number; onChange: (v: 
   );
 }
 
+// Trip details are the real ride; the fare is still SPEC.md §4's v1 flat
+// placeholder, and the feedback form isn't persisted yet (§2.6 — separate
+// milestone, no table for it).
 export default function RideComplete() {
   const { rider } = useProfiles();
+  const { rideId } = useLocalSearchParams<{ rideId: string }>();
+  const [ride, setRide] = useState<RideRequestData | null>(null);
   const riderFirstName = rider.fullName.trim().split(' ')[0] || 'The rider';
   const [mobilityRating, setMobilityRating] = useState(4);
   const [patienceRating, setPatienceRating] = useState(5);
   const [vehicleRating, setVehicleRating] = useState(5);
   const [overall, setOverall] = useState(5);
   const [comment, setComment] = useState('');
+
+  useEffect(() => {
+    if (!rideId) return;
+    (async () => {
+      const { data } = await fetchRideRequest(rideId);
+      setRide(data);
+    })();
+  }, [rideId]);
 
   return (
     <Screen>
@@ -46,14 +60,15 @@ export default function RideComplete() {
               <CheckIcon size={26} color={colors.positiveDark} />
             </View>
             <Text style={{ fontSize: 19, fontWeight: '700', color: colors.text }}>Ride Complete</Text>
-            <Hint>{riderFirstName} arrived safely at Riverside Medical Center</Hint>
+            <Hint>
+              {riderFirstName} arrived safely{ride?.dropoff ? ` at ${ride.dropoff}` : ''}
+            </Hint>
           </View>
 
           <Card>
-            <TripRow k="Pickup" v="123 Maple Street" />
-            <TripRow k="Dropoff" v="Riverside Medical Center" />
+            <TripRow k="Pickup" v={ride?.pickup ?? '—'} />
+            <TripRow k="Dropoff" v={ride?.dropoff ?? '—'} />
             <Divider />
-            <TripRow k="Duration" v="22 min" />
             <TripRow k="Fare" v="$19.50" />
           </Card>
 
@@ -112,9 +127,9 @@ export default function RideComplete() {
 
 function TripRow({ k, v }: { k: string; v: string }) {
   return (
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: spacing.md }}>
       <Text style={{ fontSize: 14, color: colors.textSecondary }}>{k}</Text>
-      <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>{v}</Text>
+      <Text style={{ flexShrink: 1, textAlign: 'right', fontSize: 14, fontWeight: '700', color: colors.text }}>{v}</Text>
     </View>
   );
 }

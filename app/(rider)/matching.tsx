@@ -6,7 +6,7 @@ import { colors, spacing, type } from '../../constants/theme';
 import { Card, Hint, Screen, SecondaryButton, TopBar } from '../../components/ui';
 import { CarIcon, CheckIcon, ClockIcon } from '../../components/Icon';
 import { useProfiles } from '../../contexts/ProfileContext';
-import { cancelRideRequest, subscribeToRide } from '../../lib/rideApi';
+import { ACTIVE_RIDE_STATUSES, cancelRideRequest, fetchRideRequest, RideRequestData, subscribeToRide } from '../../lib/rideApi';
 
 export default function Matching() {
   const { rider } = useProfiles();
@@ -15,17 +15,34 @@ export default function Matching() {
 
   // Real matching: wait for a driver to accept this exact ride row (any
   // available driver can see it — see SPEC.md for capability-tag filtering
-  // as a documented next step). No polling — Realtime pushes the update.
+  // as a documented next step). No polling — Realtime pushes the update,
+  // plus one fetch after subscribing in case a driver accepted before the
+  // subscription was live.
   useEffect(() => {
     if (!rideId) return;
-    const unsubscribe = subscribeToRide(rideId, (ride) => {
-      if (ride.status === 'matched') {
+    let left = false;
+    const route = (ride: RideRequestData) => {
+      if (left) return;
+      if (ACTIVE_RIDE_STATUSES.includes(ride.status)) {
+        left = true;
         router.replace({ pathname: '/(rider)/en-route', params: { rideId } });
+      } else if (ride.status === 'completed') {
+        left = true;
+        router.replace({ pathname: '/(rider)/complete', params: { rideId } });
       } else if (ride.status === 'cancelled') {
+        left = true;
         router.replace('/(rider)/home');
       }
-    });
-    return unsubscribe;
+    };
+    const unsubscribe = subscribeToRide(rideId, route);
+    (async () => {
+      const { data } = await fetchRideRequest(rideId);
+      if (data) route(data);
+    })();
+    return () => {
+      left = true;
+      unsubscribe();
+    };
   }, [rideId]);
 
   return (

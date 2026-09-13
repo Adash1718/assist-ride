@@ -57,7 +57,14 @@ the app by phase/role rather than by feature:
   `en-route` → `tracking` → `complete`.
 - `app/(driver)/` — the driver-facing flow: `driver-home` (availability
   toggle), `incoming` (a live ride request to accept/decline),
-  `driver-profile`.
+  `active-ride` (matched → en route → arrived/PIN → in progress →
+  completed), `driver-profile`. A driver with an active ride is always
+  sent to `active-ride` and offered nothing new. Driver Home's matching
+  runs in `useFocusEffect`, not `useEffect` — it stays mounted under the
+  screens pushed on top of it, and a mounted-but-unfocused subscription
+  would keep offering rides from underneath (double-booking). Leave
+  `incoming`/`active-ride` with `router.dismissTo('/(driver)/driver-home')`
+  so the existing Driver Home regains focus instead of a new one stacking.
 - `app/_layout.tsx` wraps everything in `AuthProvider` → `ProfileProvider`.
 
 **Two separate pieces of client state, not one** — don't conflate them:

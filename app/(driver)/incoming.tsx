@@ -3,8 +3,8 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing } from '../../constants/theme';
-import { Card, Hint, PrimaryButton, Screen, SecondaryButton, SectionLabel } from '../../components/ui';
-import { CameraIcon, MapPinIcon, UsersIcon } from '../../components/Icon';
+import { Card, Hint, PrimaryButton, Screen, SecondaryButton } from '../../components/ui';
+import { RecognizeRiderCard, RiderNeedsCard, TripCard } from '../../components/RideCards';
 import { useAuth } from '../../contexts/AuthContext';
 import { acceptRideRequest, declineRideRequest, fetchRideRequest, RideRequestData } from '../../lib/rideApi';
 
@@ -12,6 +12,13 @@ import { acceptRideRequest, declineRideRequest, fetchRideRequest, RideRequestDat
 // window of a standard rideshare) — a driver here needs time to actually
 // read the rider's needs before committing.
 const ACCEPT_WINDOW_SECONDS = 45;
+
+// Back to the Driver Home this screen was pushed from (rather than stacking
+// a new one) — its focus effect then resumes matching, or redirects to the
+// driver's active ride if they have one.
+function backToDriverHome() {
+  router.dismissTo('/(driver)/driver-home');
+}
 
 export default function DriverIncoming() {
   const { rideId } = useLocalSearchParams<{ rideId: string }>();
@@ -39,7 +46,7 @@ export default function DriverIncoming() {
       // forever on one ride this driver has already effectively passed on.
       (async () => {
         if (rideId && user) await declineRideRequest(rideId, user.id);
-        router.replace('/(driver)/driver-home');
+        backToDriverHome();
       })();
       return;
     }
@@ -50,13 +57,6 @@ export default function DriverIncoming() {
   const mm = Math.floor(secondsLeft / 60);
   const ss = String(secondsLeft % 60).padStart(2, '0');
 
-  const needs = ride
-    ? [ride.needsSnapshot.mobilityAid !== 'None' ? ride.needsSnapshot.mobilityAid : null, ...ride.needsSnapshot.communicationNeeds, ...ride.needsSnapshot.assistanceNeeds].filter(
-        (n): n is string => !!n
-      )
-    : [];
-  const description = ride?.needsSnapshot.idDescription.trim() || 'No description on file.';
-
   async function handleAccept() {
     if (!rideId || !user) return;
     setResponding(true);
@@ -64,14 +64,14 @@ export default function DriverIncoming() {
     const { error: err } = await acceptRideRequest(rideId, user.id);
     setResponding(false);
     if (err) {
-      // Another driver claimed it first or the rider cancelled — either way
-      // it's gone, so send this driver back to waiting (Driver Home's
-      // catch-up fetch will surface the next open ride, if any).
-      setError('This ride is no longer available.');
-      setTimeout(() => router.replace('/(driver)/driver-home'), 1500);
+      // Another driver claimed it first, the rider cancelled, or this driver
+      // already has an active ride — back to Driver Home, which surfaces the
+      // next open ride (or the active one).
+      setError(err);
+      setTimeout(backToDriverHome, 1500);
       return;
     }
-    router.replace('/(driver)/driver-home');
+    router.replace({ pathname: '/(driver)/active-ride', params: { rideId } });
   }
 
   async function handleDecline() {
@@ -86,7 +86,7 @@ export default function DriverIncoming() {
       setError("Couldn't decline this ride. Please try again.");
       return;
     }
-    router.replace('/(driver)/driver-home');
+    backToDriverHome();
   }
 
   if (loading || !ride) return null;
@@ -119,69 +119,9 @@ export default function DriverIncoming() {
             </Card>
           )}
 
-          <Card style={{ borderColor: colors.accent, backgroundColor: colors.accentSoft }}>
-            <SectionLabel>Rider needs</SectionLabel>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              {needs.length > 0 ? (
-                needs.map((tag) => (
-                  <View
-                    key={tag}
-                    style={{
-                      paddingVertical: 8,
-                      paddingHorizontal: 14,
-                      borderRadius: 18,
-                      backgroundColor: colors.surface,
-                      borderWidth: 1,
-                      borderColor: colors.accent,
-                    }}
-                  >
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: colors.accentDark }}>{tag}</Text>
-                  </View>
-                ))
-              ) : (
-                <Hint>No specific needs on file.</Hint>
-              )}
-            </View>
-          </Card>
-
-          <Card>
-            <SectionLabel>Recognizing the rider</SectionLabel>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
-              <View
-                style={{
-                  width: 64,
-                  height: 64,
-                  borderRadius: 12,
-                  backgroundColor: colors.surfaceAlt,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <CameraIcon color={colors.textTertiary} />
-              </View>
-              <Text style={{ flex: 1, fontSize: 13.5, color: colors.textSecondary, lineHeight: 19 }}>{description}</Text>
-            </View>
-          </Card>
-
-          <Card>
-            {ride.companionCount > 0 && (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <UsersIcon size={18} color={colors.textTertiary} />
-                <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }}>
-                  +{ride.companionCount} companion{ride.companionCount > 1 ? 's' : ''} riding along
-                </Text>
-              </View>
-            )}
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <MapPinIcon size={18} color={colors.textTertiary} />
-              <Text style={{ fontSize: 14, color: colors.text }}>{ride.pickup}</Text>
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <MapPinIcon size={18} color={colors.textTertiary} />
-              <Text style={{ fontSize: 14, color: colors.text }}>{ride.dropoff}</Text>
-            </View>
-            {ride.rideNotes.trim() !== '' && <Hint>"{ride.rideNotes}"</Hint>}
-          </Card>
+          <RiderNeedsCard ride={ride} />
+          <RecognizeRiderCard ride={ride} />
+          <TripCard ride={ride} />
         </ScrollView>
 
         <View

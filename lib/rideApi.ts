@@ -17,6 +17,28 @@ export type RideStatus =
   | 'cancelled'
   | 'no_show';
 
+// A driver with a ride in one of these states is busy: Driver Home sends
+// them to the active-ride screen and offers no new requests (and migration
+// 0007 enforces one such ride per driver in the database).
+export const ACTIVE_RIDE_STATUSES: RideStatus[] = ['matched', 'driver_en_route', 'arrived', 'in_progress'];
+
+// Statuses only ever move forward, so when a fetch result and a Realtime
+// update race each other, the further-along one is the current one.
+const STATUS_RANK: Record<RideStatus, number> = {
+  requested: 0,
+  matched: 1,
+  driver_en_route: 2,
+  arrived: 3,
+  in_progress: 4,
+  completed: 5,
+  cancelled: 5,
+  no_show: 5,
+};
+
+export function newerRide(prev: RideRequestData | null, next: RideRequestData): RideRequestData {
+  return prev && prev.id === next.id && STATUS_RANK[prev.status] > STATUS_RANK[next.status] ? prev : next;
+}
+
 export type NeedsSnapshot = {
   riderName: string;
   mobilityAid: string;
@@ -124,9 +146,47 @@ export async function acceptRideRequest(rideId: string, driverId: string): Promi
     .eq('id', rideId)
     .eq('status', 'requested')
     .select('id');
+  // 23505 = migration 0007's one-active-ride-per-driver index.
+  if (error?.code === '23505') return { error: 'You already have an active ride.' };
   if (error) return { error: error.message };
   if (!data || data.length === 0) return { error: 'This ride is no longer available.' };
   return { error: null };
+}
+
+// The driver's own in-progress ride, if any (see ACTIVE_RIDE_STATUSES).
+export async function fetchActiveRideForDriver(driverId: string): Promise<{ data: RideRequestData | null; error: string | null }> {
+  const { data, error } = await supabase
+    .from('ride_requests')
+    .select('*')
+    .eq('matched_driver_id', driverId)
+    .in('status', ACTIVE_RIDE_STATUSES)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) return { data: null, error: error.message };
+  return { data: data ? mapRow(data) : null, error: null };
+}
+
+// Driver-side progression: matched → driver_en_route → arrived →
+// in_progress → completed. Existing RLS already allows this ("driver claims
+// a requested ride" also matches rows where matched_driver_id = auth.uid(),
+// and its check keeps it that way), so no migration is needed. The update is
+// conditional on the status the screen last saw, so a stale screen can't
+// advance a ride that was cancelled (or already advanced) in the meantime.
+export async function advanceRideStatus(
+  rideId: string,
+  from: RideStatus,
+  to: RideStatus
+): Promise<{ data: RideRequestData | null; error: string | null }> {
+  const { data, error } = await supabase
+    .from('ride_requests')
+    .update({ status: to, updated_at: new Date().toISOString() })
+    .eq('id', rideId)
+    .eq('status', from)
+    .select('*');
+  if (error) return { data: null, error: error.message };
+  if (!data || data.length === 0) return { data: null, error: 'This ride was updated elsewhere — it may have been cancelled.' };
+  return { data: mapRow(data[0]), error: null };
 }
 
 // Marks this ride as declined by this driver (ride stays 'requested' for
@@ -203,8 +263,8 @@ function uniqueTopic(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2)}`;
 }
 
-// Rider side: live updates on one specific ride (e.g. status flips to
-// 'matched').
+// Live updates on one specific ride — the rider following their ride's
+// status, or the matched driver seeing the rider cancel.
 export function subscribeToRide(rideId: string, onChange: (ride: RideRequestData) => void): () => void {
   const channel: RealtimeChannel = supabase
     .channel(uniqueTopic(`ride-${rideId}`))
