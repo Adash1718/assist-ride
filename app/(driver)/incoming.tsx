@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -27,6 +27,7 @@ export default function DriverIncoming() {
   const [loading, setLoading] = useState(true);
   const [responding, setResponding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const deadline = useRef(Date.now() + ACCEPT_WINDOW_SECONDS * 1000);
   const [secondsLeft, setSecondsLeft] = useState(ACCEPT_WINDOW_SECONDS);
 
   useEffect(() => {
@@ -38,20 +39,27 @@ export default function DriverIncoming() {
     })();
   }, [rideId]);
 
+  // Counts down to a fixed deadline instead of chaining 1s timeouts:
+  // browsers throttle timers in background tabs (a chained countdown was
+  // measured at ~1.6s per "second"), which silently stretched the 45s
+  // window. Each tick just re-reads the clock, so a late tick can't add
+  // time. (Still client-side — the server doesn't enforce the window yet.)
   useEffect(() => {
-    if (secondsLeft <= 0) {
-      // Window expired — counts as a decline (not just "go back and wait"),
-      // otherwise the very next catch-up check on Driver Home would find
-      // this exact same still-open ride and immediately re-show it, looping
-      // forever on one ride this driver has already effectively passed on.
-      (async () => {
-        if (rideId && user) await declineRideRequest(rideId, user.id);
-        backToDriverHome();
-      })();
-      return;
-    }
-    const t = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
-    return () => clearTimeout(t);
+    const tick = () => setSecondsLeft(Math.max(0, Math.ceil((deadline.current - Date.now()) / 1000)));
+    const t = setInterval(tick, 500);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    if (secondsLeft > 0) return;
+    // Window expired — counts as a decline (not just "go back and wait"),
+    // otherwise the very next catch-up check on Driver Home would find this
+    // exact same still-open ride and immediately re-show it, looping forever
+    // on one ride this driver has already effectively passed on.
+    (async () => {
+      if (rideId && user) await declineRideRequest(rideId, user.id);
+      backToDriverHome();
+    })();
   }, [secondsLeft]);
 
   const mm = Math.floor(secondsLeft / 60);
