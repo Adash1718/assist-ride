@@ -22,22 +22,13 @@ export type RideStatus =
 // 0007 enforces one such ride per driver in the database).
 export const ACTIVE_RIDE_STATUSES: RideStatus[] = ['matched', 'driver_en_route', 'arrived', 'in_progress'];
 
-// Statuses only ever move forward, so when a fetch result and a Realtime
-// update race each other, the further-along one is the current one.
-const STATUS_RANK: Record<RideStatus, number> = {
-  requested: 0,
-  matched: 1,
-  driver_en_route: 2,
-  arrived: 3,
-  in_progress: 4,
-  completed: 5,
-  cancelled: 5,
-  no_show: 5,
-};
+// Matched but not yet picked up — the window in which the rider can cancel
+// and the driver can hand the ride back (driverCancelRide).
+export const PRE_PICKUP_STATUSES: RideStatus[] = ['matched', 'driver_en_route', 'arrived'];
 
-export function newerRide(prev: RideRequestData | null, next: RideRequestData): RideRequestData {
-  return prev && prev.id === next.id && STATUS_RANK[prev.status] > STATUS_RANK[next.status] ? prev : next;
-}
+// A rider's ride that's still going — searching or matched through riding.
+// Rider Home sends a rider with one of these straight to it.
+export const OPEN_RIDE_STATUSES: RideStatus[] = ['requested', ...ACTIVE_RIDE_STATUSES];
 
 export type NeedsSnapshot = {
   riderName: string;
@@ -167,6 +158,20 @@ export async function fetchActiveRideForDriver(driverId: string): Promise<{ data
   return { data: data ? mapRow(data) : null, error: null };
 }
 
+// The rider's ride that's still going, if any (see OPEN_RIDE_STATUSES).
+export async function fetchActiveRideForRider(riderUserId: string): Promise<{ data: RideRequestData | null; error: string | null }> {
+  const { data, error } = await supabase
+    .from('ride_requests')
+    .select('*')
+    .eq('requested_by', riderUserId)
+    .in('status', OPEN_RIDE_STATUSES)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) return { data: null, error: error.message };
+  return { data: data ? mapRow(data) : null, error: null };
+}
+
 // Driver-side progression: matched → driver_en_route → arrived →
 // in_progress → completed. Existing RLS already allows this ("driver claims
 // a requested ride" also matches rows where matched_driver_id = auth.uid(),
@@ -187,6 +192,21 @@ export async function advanceRideStatus(
   if (error) return { data: null, error: error.message };
   if (!data || data.length === 0) return { data: null, error: 'This ride was updated elsewhere — it may have been cancelled.' };
   return { data: mapRow(data[0]), error: null };
+}
+
+// Driver backs out before pickup. The ride isn't ended — it goes back into
+// the search (status 'requested', driver cleared and added to
+// declined_driver_ids so they aren't offered it again), so the rider keeps
+// their booking and just gets a new driver. A SECURITY DEFINER function
+// (migration 0008) because RLS doesn't let a driver clear
+// matched_driver_id; it checks the caller is the matched driver and the ride
+// hasn't been picked up yet.
+export async function driverCancelRide(rideId: string): Promise<{ error: string | null }> {
+  const { error } = await supabase.rpc('driver_cancel_ride', { p_ride_id: rideId });
+  if (!error) return { error: null };
+  if (error.code === '55000') return { error: "This ride can't be cancelled any more — it has already started or ended." };
+  if (error.code === '42501') return { error: "You're no longer the driver on this ride." };
+  return { error: error.message };
 }
 
 // Marks this ride as declined by this driver (ride stays 'requested' for
@@ -214,12 +234,20 @@ export async function fetchOldestOpenRequest(): Promise<{ data: RideRequestData 
   return { data: data ? mapRow(data) : null, error: null };
 }
 
+// Rider cancels. Only before pickup, and conditional on that, so a stale
+// screen can't cancel a ride that's already in progress or finished (e.g.
+// the driver completing it just as the rider taps Cancel) — confirmed by
+// getting the row back, since a zero-row UPDATE isn't an error.
 export async function cancelRideRequest(rideId: string): Promise<{ error: string | null }> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('ride_requests')
     .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-    .eq('id', rideId);
-  return { error: error?.message ?? null };
+    .eq('id', rideId)
+    .in('status', ['requested', ...PRE_PICKUP_STATUSES])
+    .select('id');
+  if (error) return { error: error.message };
+  if (!data || data.length === 0) return { error: "This ride can't be cancelled any more — it has already started or ended." };
+  return { error: null };
 }
 
 // Public-enough fields of the matched driver, for the rider's en-route
@@ -264,7 +292,10 @@ function uniqueTopic(prefix: string): string {
 }
 
 // Live updates on one specific ride — the rider following their ride's
-// status, or the matched driver seeing the rider cancel.
+// status, or the matched driver seeing the rider cancel. Realtime only
+// delivers a change if the subscriber can still SELECT the row afterwards
+// (RLS is checked per subscriber), so this can't tell a driver viewing an
+// open offer that the ride was cancelled or taken — see incoming.tsx.
 export function subscribeToRide(rideId: string, onChange: (ride: RideRequestData) => void): () => void {
   const channel: RealtimeChannel = supabase
     .channel(uniqueTopic(`ride-${rideId}`))
@@ -279,14 +310,22 @@ export function subscribeToRide(rideId: string, onChange: (ride: RideRequestData
   };
 }
 
-// Driver side: live feed of newly requested rides while available.
-export function subscribeToIncomingRequests(onInsert: (ride: RideRequestData) => void): () => void {
+// Driver side: live feed of rides that become open while available — new
+// requests (INSERT) and rides a driver handed back into the search
+// (driverCancelRide, an UPDATE back to 'requested'). RLS already hides rides
+// this driver declined or handed back, so only rides they can take arrive.
+export function subscribeToIncomingRequests(onOpen: (ride: RideRequestData) => void): () => void {
   const channel: RealtimeChannel = supabase
     .channel(uniqueTopic('incoming-ride-requests'))
     .on(
       'postgres_changes',
       { event: 'INSERT', schema: 'public', table: 'ride_requests', filter: 'status=eq.requested' },
-      (payload) => onInsert(mapRow(payload.new))
+      (payload) => onOpen(mapRow(payload.new))
+    )
+    .on(
+      'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'ride_requests', filter: 'status=eq.requested' },
+      (payload) => onOpen(mapRow(payload.new))
     )
     .subscribe();
   return () => {

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -6,49 +6,68 @@ import { colors, spacing, type } from '../../constants/theme';
 import { Card, Hint, Screen, SecondaryButton, TopBar } from '../../components/ui';
 import { CarIcon, CheckIcon, ClockIcon } from '../../components/Icon';
 import { useProfiles } from '../../contexts/ProfileContext';
-import { ACTIVE_RIDE_STATUSES, cancelRideRequest, fetchRideRequest, RideRequestData, subscribeToRide } from '../../lib/rideApi';
+import { ACTIVE_RIDE_STATUSES, cancelRideRequest } from '../../lib/rideApi';
+import { useLiveRide } from '../../lib/useLiveRide';
 
 export default function Matching() {
   const { rider } = useProfiles();
-  const { rideId } = useLocalSearchParams<{ rideId: string }>();
+  const { rideId, notice } = useLocalSearchParams<{ rideId: string; notice?: string }>();
+  const { ride } = useLiveRide(rideId);
+  const [cancelling, setCancelling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const leaving = useRef(false);
   const riderFirstName = rider.fullName.trim().split(' ')[0] || 'this rider';
+  const afterDriverCancel = notice === 'driver_cancelled';
 
   // Real matching: wait for a driver to accept this exact ride row (any
   // available driver can see it — see SPEC.md for capability-tag filtering
-  // as a documented next step). No polling — Realtime pushes the update,
-  // plus one fetch after subscribing in case a driver accepted before the
-  // subscription was live.
+  // as a documented next step). No polling — Realtime pushes the update, and
+  // useLiveRide's fetch covers a driver who accepted before the subscription
+  // was live. This is also where a ride lands after its driver hands it back
+  // before pickup: it's simply back in the search.
+  const status = ride?.status;
   useEffect(() => {
+    if (leaving.current || !status) return;
+    if (ACTIVE_RIDE_STATUSES.includes(status)) {
+      leaving.current = true;
+      router.replace({ pathname: '/(rider)/en-route', params: { rideId } });
+    } else if (status === 'completed') {
+      leaving.current = true;
+      router.replace({ pathname: '/(rider)/complete', params: { rideId } });
+    } else if (status === 'cancelled' || status === 'no_show') {
+      leaving.current = true;
+      router.replace({ pathname: '/(rider)/home', params: { notice: 'cancelled' } });
+    }
+  }, [status]);
+
+  async function handleCancel() {
     if (!rideId) return;
-    let left = false;
-    const route = (ride: RideRequestData) => {
-      if (left) return;
-      if (ACTIVE_RIDE_STATUSES.includes(ride.status)) {
-        left = true;
-        router.replace({ pathname: '/(rider)/en-route', params: { rideId } });
-      } else if (ride.status === 'completed') {
-        left = true;
-        router.replace({ pathname: '/(rider)/complete', params: { rideId } });
-      } else if (ride.status === 'cancelled') {
-        left = true;
-        router.replace('/(rider)/home');
-      }
-    };
-    const unsubscribe = subscribeToRide(rideId, route);
-    (async () => {
-      const { data } = await fetchRideRequest(rideId);
-      if (data) route(data);
-    })();
-    return () => {
-      left = true;
-      unsubscribe();
-    };
-  }, [rideId]);
+    leaving.current = true; // our own cancel's Realtime echo mustn't navigate a second time
+    setCancelling(true);
+    setError(null);
+    const { error: err } = await cancelRideRequest(rideId);
+    setCancelling(false);
+    if (err) {
+      leaving.current = false;
+      setError(err);
+      return;
+    }
+    router.replace({ pathname: '/(rider)/home', params: { notice: 'cancelled' } });
+  }
 
   return (
     <Screen>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-        <TopBar title="Finding a Driver" onBack={() => router.back()} />
+        <TopBar title={afterDriverCancel ? 'Finding a New Driver' : 'Finding a Driver'} onBack={() => router.back()} />
+
+        {afterDriverCancel && (
+          <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.lg }}>
+            <Card style={{ backgroundColor: colors.accentSoft, borderColor: colors.accent }}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: colors.accentDark }}>Your driver had to cancel</Text>
+              <Hint>Your ride is still booked — you don't need to rebook. We're matching you with a new driver now.</Hint>
+            </Card>
+          </View>
+        )}
 
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl, gap: spacing.lg }}>
           <View
@@ -81,14 +100,9 @@ export default function Matching() {
           <Hint>You'll move to the next screen the moment a driver accepts.</Hint>
         </View>
 
-        <View style={{ padding: spacing.lg }}>
-          <SecondaryButton
-            label="Cancel Request"
-            onPress={async () => {
-              if (rideId) await cancelRideRequest(rideId);
-              router.replace('/(rider)/home');
-            }}
-          />
+        <View style={{ padding: spacing.lg, gap: 8 }}>
+          {error && <Hint>{error}</Hint>}
+          <SecondaryButton label={cancelling ? 'Cancelling…' : 'Cancel Request'} onPress={handleCancel} />
         </View>
       </SafeAreaView>
     </Screen>

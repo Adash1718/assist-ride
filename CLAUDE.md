@@ -54,7 +54,12 @@ the app by phase/role rather than by feature:
   (`rider.tsx`, `driver.tsx`) plus the driver's self-attested capability
   check (`driver-verification.tsx`).
 - `app/(rider)/` — the rider-facing flow: home → `book` → `matching` →
-  `en-route` → `tracking` → `complete`.
+  `en-route` → `tracking` → `complete`. Rider Home sends a rider whose ride
+  is still going straight back to it (`requested` → `matching`; matched
+  through `in_progress` → `en-route`) instead of offering "Book a Ride" —
+  the rider-side counterpart of the driver double-booking fix (runs in
+  `useFocusEffect`, same reason as Driver Home). A rider cancel lands on
+  Home with a "Your ride was cancelled" notice (`?notice=cancelled`).
 - `app/(driver)/` — the driver-facing flow: `driver-home` (availability
   toggle), `incoming` (a live ride request to accept/decline),
   `active-ride` (matched → en route → arrived/PIN → in progress →
@@ -65,6 +70,11 @@ the app by phase/role rather than by feature:
   would keep offering rides from underneath (double-booking). Leave
   `incoming`/`active-ride` with `router.dismissTo('/(driver)/driver-home')`
   so the existing Driver Home regains focus instead of a new one stacking.
+  Before pickup a driver can hand a ride back (`driverCancelRide` →
+  `driver_cancel_ride`, 0008): the ride isn't ended but goes back to
+  `requested` with this driver in `declined_driver_ids`, so other online
+  drivers get it, and the rider's `en-route` says "your driver had to
+  cancel" and returns to `matching` (`?notice=driver_cancelled`).
 - `app/_layout.tsx` wraps everything in `AuthProvider` → `ProfileProvider`.
 
 **Two separate pieces of client state, not one** — don't conflate them:
@@ -83,6 +93,10 @@ the app by phase/role rather than by feature:
   subscription wiring for live matching. Matching is intentionally minimal
   (any available driver sees any `requested` ride — no capability/tag
   filtering yet).
+- `useLiveRide.ts` — one ride kept current from a fetch plus its Realtime
+  subscription (used by `matching`, `en-route`, `active-ride`). Once a live
+  event has arrived it wins over the fetch. Don't merge by "furthest
+  status": a driver cancel moves a ride backwards to `requested`.
 - `validators.ts`, `dateTime.ts`, `format.ts` — input formatting/validation
   (phone auto-format, DOB, scheduling) shared by the profile and booking
   forms.
@@ -92,8 +106,16 @@ trail — 0002 → 0006 fixed each other's bugs, worth reading in order; note
 0005's diagnosis turned out to be wrong, 0006 explains the real cause):
 - A driver's availability is a persisted column
   (`driver_profiles.is_available`), not just local state.
-- `ride_requests` uses Postgres Realtime; drivers subscribe to see new
-  `requested` rows, riders subscribe to see status changes on their own row.
+- `ride_requests` uses Postgres Realtime; drivers subscribe to rides that
+  become `requested` (INSERTs, plus UPDATEs — a ride handed back by its
+  driver), riders subscribe to see status changes on their own row.
+- Realtime delivers a change only if the subscriber can still SELECT the
+  row afterwards (RLS is checked per subscriber). So a driver looking at an
+  open offer never hears that the rider cancelled or another driver claimed
+  it — the row just became invisible to them; `incoming.tsx` re-checks the
+  ride every 2s instead. (Observed while testing: in a hidden, unfocused
+  Chrome tab, live updates and timers can land well after the fact — test
+  screens with the tab in the foreground.)
 - Availability checks run through a `SECURITY DEFINER` SQL function
   (`is_available_driver`), not a direct RLS-to-RLS query — a direct cross-
   table policy reference between `driver_profiles` and `ride_requests`

@@ -1,17 +1,20 @@
 import { useEffect, useState } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ScrollView, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing } from '../../constants/theme';
-import { Card, Hint, PrimaryButton, Screen, SectionLabel } from '../../components/ui';
+import { Card, Hint, PrimaryButton, Screen, SecondaryButton, SectionLabel } from '../../components/ui';
 import { CheckIcon, ClockIcon } from '../../components/Icon';
 import { RecognizeRiderCard, RiderNeedsCard, TripCard } from '../../components/RideCards';
-import { advanceRideStatus, fetchRideRequest, newerRide, RideRequestData, RideStatus, subscribeToRide } from '../../lib/rideApi';
+import { advanceRideStatus, driverCancelRide, PRE_PICKUP_STATUSES, RideStatus } from '../../lib/rideApi';
+import { useLiveRide } from '../../lib/useLiveRide';
 
 // The driver's side of a matched ride (SPEC.md §3.D–G): drive to pickup →
 // arrive → confirm the rider's PIN → ride → complete. Driver Home sends a
 // driver here whenever they have an active ride and offers them no new
 // requests until it ends, so this is where every matched driver lands.
+// Before pickup the driver can also hand the ride back (driverCancelRide) —
+// it goes back into the search for another driver rather than ending.
 
 type Step = { status: RideStatus; label: string; action: string; next: RideStatus };
 
@@ -28,29 +31,19 @@ function backToDriverHome() {
 
 export default function ActiveRide() {
   const { rideId } = useLocalSearchParams<{ rideId: string }>();
-  const [ride, setRide] = useState<RideRequestData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { ride, loading, setRide } = useLiveRide(rideId);
   const [pinEntry, setPinEntry] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
 
+  // Not visible to this driver (any more) — nothing to show here.
   useEffect(() => {
-    if (!rideId) return;
-    // Subscribe before fetching so an update landing in between isn't lost.
-    const unsubscribe = subscribeToRide(rideId, (updated) => setRide((prev) => newerRide(prev, updated)));
-    (async () => {
-      const { data } = await fetchRideRequest(rideId);
-      if (!data) {
-        backToDriverHome();
-        return;
-      }
-      setRide((prev) => newerRide(prev, data));
-      setLoading(false);
-    })();
-    return unsubscribe;
-  }, [rideId]);
+    if (!loading && !ride) backToDriverHome();
+  }, [loading, ride]);
 
-  // The rider cancelled (pushed live via the subscription above).
+  // The rider cancelled (pushed live — the row stays visible to the matched
+  // driver, so Realtime delivers it).
   const cancelled = ride?.status === 'cancelled';
   useEffect(() => {
     if (!cancelled) return;
@@ -60,6 +53,7 @@ export default function ActiveRide() {
 
   const currentIndex = STEPS.findIndex((s) => s.status === ride?.status);
   const step = currentIndex >= 0 ? STEPS[currentIndex] : null;
+  const canHandBack = !!ride && PRE_PICKUP_STATUSES.includes(ride.status);
 
   async function advance() {
     if (!ride || !step) return;
@@ -82,7 +76,24 @@ export default function ActiveRide() {
       backToDriverHome();
       return;
     }
-    setRide((prev) => newerRide(prev, data));
+    // Show our own update right away rather than waiting for its Realtime
+    // echo — unless a newer live change (e.g. the rider cancelling) already
+    // landed, which must not be overwritten.
+    setRide((prev) => (prev?.status === step.status ? data : prev));
+  }
+
+  async function handBack() {
+    if (!ride) return;
+    setBusy(true);
+    setError(null);
+    const { error: err } = await driverCancelRide(ride.id);
+    setBusy(false);
+    if (err) {
+      setConfirmingCancel(false);
+      setError(err);
+      return;
+    }
+    backToDriverHome();
   }
 
   if (loading || !ride) return null;
@@ -148,32 +159,53 @@ export default function ActiveRide() {
             }}
           >
             {error && <Hint>{error}</Hint>}
-            {step.status === 'arrived' && (
-              <TextInput
-                value={pinEntry}
-                onChangeText={(t) => setPinEntry(t.replace(/\D/g, '').slice(0, 4))}
-                placeholder="Rider's 4-digit PIN"
-                placeholderTextColor={colors.textTertiary}
-                keyboardType="number-pad"
-                maxLength={4}
-                style={{
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  borderRadius: 12,
-                  padding: 14,
-                  fontSize: 20,
-                  letterSpacing: 6,
-                  textAlign: 'center',
-                  color: colors.text,
-                  backgroundColor: colors.surface,
-                }}
-              />
+
+            {confirmingCancel ? (
+              <>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>Cancel this ride?</Text>
+                <Hint>The rider keeps their booking and we'll find them another driver. You won't be offered this ride again.</Hint>
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <SecondaryButton label="Keep ride" onPress={() => setConfirmingCancel(false)} />
+                  <View style={{ flex: 1 }}>
+                    <PrimaryButton label={busy ? 'Cancelling…' : 'Yes, cancel ride'} onPress={handBack} disabled={busy} />
+                  </View>
+                </View>
+              </>
+            ) : (
+              <>
+                {step.status === 'arrived' && (
+                  <TextInput
+                    value={pinEntry}
+                    onChangeText={(t) => setPinEntry(t.replace(/\D/g, '').slice(0, 4))}
+                    placeholder="Rider's 4-digit PIN"
+                    placeholderTextColor={colors.textTertiary}
+                    keyboardType="number-pad"
+                    maxLength={4}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      borderRadius: 12,
+                      padding: 14,
+                      fontSize: 20,
+                      letterSpacing: 6,
+                      textAlign: 'center',
+                      color: colors.text,
+                      backgroundColor: colors.surface,
+                    }}
+                  />
+                )}
+                <PrimaryButton
+                  label={busy ? 'Updating…' : step.action}
+                  onPress={advance}
+                  disabled={busy || (step.status === 'arrived' && pinEntry.length !== 4)}
+                />
+                {canHandBack && (
+                  <Pressable onPress={() => setConfirmingCancel(true)} style={{ alignSelf: 'center', padding: 6 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary }}>Can't make it? Cancel ride</Text>
+                  </Pressable>
+                )}
+              </>
             )}
-            <PrimaryButton
-              label={busy ? 'Updating…' : step.action}
-              onPress={advance}
-              disabled={busy || (step.status === 'arrived' && pinEntry.length !== 4)}
-            />
           </View>
         )}
       </SafeAreaView>

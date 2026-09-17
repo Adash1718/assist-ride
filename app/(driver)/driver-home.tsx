@@ -86,7 +86,8 @@ export default function DriverHome() {
   //
   // On every focus: a driver with an active ride goes straight back to it
   // and is offered nothing new (see ACTIVE_RIDE_STATUSES). Otherwise, while
-  // confirmed available, (a) subscribe to newly requested rides and (b)
+  // confirmed available, (a) subscribe to rides that become open — new
+  // requests, and rides another driver handed back before pickup — and (b)
   // catch up on any ride ALREADY open (a driver late to come online, or
   // back here right after declining) — RLS already excludes rides this
   // driver declined, so either path only surfaces a ride still up for grabs

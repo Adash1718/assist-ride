@@ -1,5 +1,5 @@
-import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, type } from '../../constants/theme';
@@ -9,11 +9,14 @@ import { useProfiles } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { initialsFrom } from '../../lib/format';
 import { ensureRiderProfileRow, fetchRiderProfile, isRiderProfileComplete } from '../../lib/profileApi';
+import { ACTIVE_RIDE_STATUSES, fetchActiveRideForRider } from '../../lib/rideApi';
 
 export default function RiderHome() {
   const { rider, setRider } = useProfiles();
   const { session, loading, signOut } = useAuth();
+  const { notice } = useLocalSearchParams<{ notice?: string }>();
   const [checking, setChecking] = useState(true);
+  const [checkingRide, setCheckingRide] = useState(true);
 
   const userId = session?.user?.id;
 
@@ -48,11 +51,40 @@ export default function RiderHome() {
     })();
   }, [loading, userId]);
 
+  // A rider whose ride is still going — searching, or matched through
+  // riding — goes straight back to it instead of seeing "Book a Ride" (and
+  // being able to book a second ride on top of it). Runs on every focus,
+  // since Home stays mounted under the booking flow pushed on top of it.
+  // Completed and cancelled rides aren't "still going", so they don't count.
+  useFocusEffect(
+    useCallback(() => {
+      if (checking || !userId) return;
+      let cancelled = false;
+      setCheckingRide(true);
+      (async () => {
+        const { data } = await fetchActiveRideForRider(userId);
+        if (cancelled) return;
+        if (data && ACTIVE_RIDE_STATUSES.includes(data.status)) {
+          router.replace({ pathname: '/(rider)/en-route', params: { rideId: data.id } });
+          return;
+        }
+        if (data) {
+          router.replace({ pathname: '/(rider)/matching', params: { rideId: data.id } });
+          return;
+        }
+        setCheckingRide(false);
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [checking, userId])
+  );
+
   const needChips = [rider.mobilityAid !== 'None' ? rider.mobilityAid : null, ...rider.communicationNeeds, ...rider.assistanceNeeds]
     .filter((c): c is string => !!c)
     .slice(0, 3);
 
-  if (checking) return null;
+  if (checking || checkingRide) return null;
 
   return (
     <Screen>
@@ -72,6 +104,13 @@ export default function RiderHome() {
         />
 
         <View style={{ flex: 1, padding: spacing.lg, gap: spacing.lg }}>
+          {notice === 'cancelled' && (
+            <Card style={{ backgroundColor: colors.positiveSoft, borderColor: colors.positive }}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: colors.positiveDark }}>Your ride was cancelled</Text>
+              <Hint>Book a new ride whenever you're ready.</Hint>
+            </Card>
+          )}
+
           <Card style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Avatar initials={initialsFrom(rider.fullName)} size={52} />
             <View style={{ flex: 1, marginLeft: spacing.md, gap: 6 }}>

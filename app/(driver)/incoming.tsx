@@ -13,6 +13,9 @@ import { acceptRideRequest, declineRideRequest, fetchRideRequest, RideRequestDat
 // read the rider's needs before committing.
 const ACCEPT_WINDOW_SECONDS = 45;
 
+// How often to re-check that the offer is still open (see below).
+const STILL_OPEN_CHECK_MS = 2000;
+
 // Back to the Driver Home this screen was pushed from (rather than stacking
 // a new one) — its focus effect then resumes matching, or redirects to the
 // driver's active ride if they have one.
@@ -27,17 +30,42 @@ export default function DriverIncoming() {
   const [loading, setLoading] = useState(true);
   const [responding, setResponding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The ride stopped being available while this driver was reading it.
+  const [gone, setGone] = useState(false);
   const deadline = useRef(Date.now() + ACCEPT_WINDOW_SECONDS * 1000);
   const [secondsLeft, setSecondsLeft] = useState(ACCEPT_WINDOW_SECONDS);
 
   useEffect(() => {
     if (!rideId) return;
     (async () => {
-      const { data } = await fetchRideRequest(rideId);
+      const { data, error: err } = await fetchRideRequest(rideId);
       setRide(data);
+      if (!err && !data) setGone(true); // already gone before this screen loaded
       setLoading(false);
     })();
   }, [rideId]);
+
+  // Is the offer still open? Realtime can't tell this screen: once the rider
+  // cancels or another driver claims the ride, RLS hides the row from this
+  // driver, and Realtime (which checks the SELECT policy per subscriber)
+  // drops the event instead of delivering it. So re-check every couple of
+  // seconds — an empty result, or a status that's moved on to someone else,
+  // means it's gone.
+  useEffect(() => {
+    if (!rideId || gone) return;
+    const t = setInterval(async () => {
+      const { data, error: err } = await fetchRideRequest(rideId);
+      if (err) return; // transient — try again next tick
+      if (!data || (data.status !== 'requested' && data.matchedDriverId !== user?.id)) setGone(true);
+    }, STILL_OPEN_CHECK_MS);
+    return () => clearInterval(t);
+  }, [rideId, gone, user?.id]);
+
+  useEffect(() => {
+    if (!gone) return;
+    const t = setTimeout(backToDriverHome, 2500);
+    return () => clearTimeout(t);
+  }, [gone]);
 
   // Counts down to a fixed deadline instead of chaining 1s timeouts:
   // browsers throttle timers in background tabs (a chained countdown was
@@ -51,7 +79,7 @@ export default function DriverIncoming() {
   }, []);
 
   useEffect(() => {
-    if (secondsLeft > 0) return;
+    if (secondsLeft > 0 || gone) return;
     // Window expired — counts as a decline (not just "go back and wait"),
     // otherwise the very next catch-up check on Driver Home would find this
     // exact same still-open ride and immediately re-show it, looping forever
@@ -97,7 +125,24 @@ export default function DriverIncoming() {
     backToDriverHome();
   }
 
-  if (loading || !ride) return null;
+  if (loading) return null;
+
+  const goneNotice = (
+    <Card style={{ backgroundColor: colors.alertSoft, borderColor: colors.alert }}>
+      <Text style={{ fontSize: 15, fontWeight: '700', color: colors.alertDark }}>This ride is no longer available</Text>
+      <Hint>The rider cancelled it or another driver accepted it. Taking you back to Driver Home…</Hint>
+    </Card>
+  );
+
+  if (!ride) {
+    return (
+      <Screen>
+        <SafeAreaView style={{ flex: 1, padding: spacing.lg }} edges={['top', 'bottom']}>
+          {goneNotice}
+        </SafeAreaView>
+      </Screen>
+    );
+  }
 
   return (
     <Screen>
@@ -113,15 +158,18 @@ export default function DriverIncoming() {
           }}
         >
           <Text style={{ flex: 1, fontSize: 19, fontWeight: '700', color: colors.text }}>New Ride Request</Text>
-          <View style={{ backgroundColor: colors.alertSoft, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10 }}>
-            <Text style={{ fontSize: 13, fontWeight: '800', color: colors.alertDark }}>
-              {mm}:{ss}
-            </Text>
-          </View>
+          {!gone && (
+            <View style={{ backgroundColor: colors.alertSoft, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10 }}>
+              <Text style={{ fontSize: 13, fontWeight: '800', color: colors.alertDark }}>
+                {mm}:{ss}
+              </Text>
+            </View>
+          )}
         </View>
 
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
-          {error && (
+          {gone && goneNotice}
+          {!gone && error && (
             <Card style={{ backgroundColor: colors.alertSoft, borderColor: colors.alert }}>
               <Hint>{error}</Hint>
             </Card>
@@ -132,21 +180,23 @@ export default function DriverIncoming() {
           <TripCard ride={ride} />
         </ScrollView>
 
-        <View
-          style={{
-            flexDirection: 'row',
-            gap: 12,
-            padding: spacing.lg,
-            borderTopWidth: 1,
-            borderTopColor: colors.border,
-            backgroundColor: colors.surface,
-          }}
-        >
-          <SecondaryButton label="Decline" onPress={handleDecline} />
-          <View style={{ flex: 1 }}>
-            <PrimaryButton label={responding ? 'Accepting…' : 'Accept'} onPress={handleAccept} disabled={responding} />
+        {!gone && (
+          <View
+            style={{
+              flexDirection: 'row',
+              gap: 12,
+              padding: spacing.lg,
+              borderTopWidth: 1,
+              borderTopColor: colors.border,
+              backgroundColor: colors.surface,
+            }}
+          >
+            <SecondaryButton label="Decline" onPress={handleDecline} />
+            <View style={{ flex: 1 }}>
+              <PrimaryButton label={responding ? 'Accepting…' : 'Accept'} onPress={handleAccept} disabled={responding} />
+            </View>
           </View>
-        </View>
+        )}
       </SafeAreaView>
     </Screen>
   );
