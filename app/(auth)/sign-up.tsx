@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
+import { backOr } from '../../lib/nav';
 import { Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, type } from '../../constants/theme';
@@ -53,7 +54,7 @@ export default function SignUp() {
     return (
       <Screen>
         <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-          <TopBar title="Check your email" onBack={() => router.back()} />
+          <TopBar title="Check your email" onBack={() => backOr('/')} />
           <View style={{ flex: 1, padding: spacing.lg, justifyContent: 'center', gap: spacing.md }}>
             <Text style={[type.heading, { color: colors.text }]}>Confirm your email</Text>
             <Text style={{ fontSize: 14, color: colors.textSecondary, lineHeight: 20 }}>
@@ -69,7 +70,7 @@ export default function SignUp() {
   return (
     <Screen>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-        <TopBar title={role === 'rider' ? 'Rider Sign Up' : 'Driver Sign Up'} onBack={() => router.back()} />
+        <TopBar title={role === 'rider' ? 'Rider Sign Up' : 'Driver Sign Up'} onBack={() => backOr('/')} />
 
         <View style={{ flex: 1, padding: spacing.lg, gap: spacing.md }}>
           <Text style={{ fontSize: 14, color: colors.textSecondary, lineHeight: 20 }}>

@@ -86,6 +86,10 @@ export default function RideComplete() {
               <StarRow value={overall} onChange={setOverall} size={22} />
             </View>
 
+            <Pressable onPress={() => router.push({ pathname: '/(rider)/tracking', params: { rideId } })} style={{ alignSelf: 'flex-start' }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary }}>View ride timeline</Text>
+            </Pressable>
+
             <TextInput
               value={comment}
               onChangeText={setComment}

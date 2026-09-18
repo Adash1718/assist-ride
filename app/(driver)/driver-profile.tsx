@@ -1,4 +1,5 @@
 import { router } from 'expo-router';
+import { backOr } from '../../lib/nav';
 import { DriverProfileForm } from '../../components/DriverProfileForm';
 import { useProfiles } from '../../contexts/ProfileContext';
 
@@ -9,8 +10,8 @@ export default function EditDriverProfile() {
     <DriverProfileForm
       title={firstName ? `${firstName}'s Profile` : 'Driver Profile'}
       ctaLabel="Save Profile"
-      onBack={() => router.back()}
-      onSubmit={() => router.back()}
+      onBack={() => backOr('/(driver)/driver-home')}
+      onSubmit={() => backOr('/(driver)/driver-home')}
     />
   );
 }

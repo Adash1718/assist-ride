@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
+import { backOr } from '../../lib/nav';
 import { Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, type } from '../../constants/theme';
@@ -58,7 +59,7 @@ export default function Matching() {
   return (
     <Screen>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-        <TopBar title={afterDriverCancel ? 'Finding a New Driver' : 'Finding a Driver'} onBack={() => router.back()} />
+        <TopBar title={afterDriverCancel ? 'Finding a New Driver' : 'Finding a Driver'} onBack={() => backOr('/(rider)/home')} />
 
         {afterDriverCancel && (
           <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.lg }}>

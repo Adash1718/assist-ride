@@ -1,4 +1,5 @@
 import { router } from 'expo-router';
+import { backOr } from '../../lib/nav';
 import { RiderProfileForm } from '../../components/RiderProfileForm';
 import { useProfiles } from '../../contexts/ProfileContext';
 
@@ -9,8 +10,8 @@ export default function EditRiderProfile() {
     <RiderProfileForm
       title={firstName ? `${firstName}'s Profile` : 'Rider Profile'}
       ctaLabel="Save Profile"
-      onBack={() => router.back()}
-      onSubmit={() => router.back()}
+      onBack={() => backOr('/(rider)/home')}
+      onSubmit={() => backOr('/(rider)/home')}
     />
   );
 }

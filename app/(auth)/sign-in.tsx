@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { router } from 'expo-router';
+import { backOr } from '../../lib/nav';
 import { Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, type } from '../../constants/theme';
@@ -64,7 +65,7 @@ export default function SignIn() {
   return (
     <Screen>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-        <TopBar title="Log In" onBack={() => router.back()} />
+        <TopBar title="Log In" onBack={() => backOr('/')} />
 
         <View style={{ flex: 1, padding: spacing.lg, gap: spacing.md }}>
           <Text style={type.label}>Email</Text>

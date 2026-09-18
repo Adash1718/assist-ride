@@ -250,6 +250,42 @@ export async function cancelRideRequest(rideId: string): Promise<{ error: string
   return { error: null };
 }
 
+// One entry in a ride's status history, written by migration 0009's trigger
+// (never by a client). Readable by whoever booked the ride and by the ride's
+// current matched driver.
+export type RideEvent = {
+  id: string;
+  rideId: string;
+  status: RideStatus;
+  driverId: string | null;
+  at: string; // ISO
+};
+
+function mapEvent(r: any): RideEvent {
+  return { id: r.id, rideId: r.ride_id, status: r.status, driverId: r.driver_id, at: r.at };
+}
+
+export async function fetchRideEvents(rideId: string): Promise<{ data: RideEvent[]; error: string | null }> {
+  const { data, error } = await supabase.from('ride_events').select('*').eq('ride_id', rideId).order('at', { ascending: true });
+  if (error) return { data: [], error: error.message };
+  return { data: (data ?? []).map(mapEvent), error: null };
+}
+
+// New steps as they happen, for the tracking timeline.
+export function subscribeToRideEvents(rideId: string, onEvent: (event: RideEvent) => void): () => void {
+  const channel: RealtimeChannel = supabase
+    .channel(uniqueTopic(`ride-events-${rideId}`))
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'ride_events', filter: `ride_id=eq.${rideId}` },
+      (payload) => onEvent(mapEvent(payload.new))
+    )
+    .subscribe();
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
 // Public-enough fields of the matched driver, for the rider's en-route
 // screen (allowed by the "rider reads their matched driver's profile" RLS
 // policy — only once that driver is actually matched_driver_id on one of

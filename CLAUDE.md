@@ -60,6 +60,10 @@ the app by phase/role rather than by feature:
   the rider-side counterpart of the driver double-booking fix (runs in
   `useFocusEffect`, same reason as Driver Home). A rider cancel lands on
   Home with a "Your ride was cancelled" notice (`?notice=cancelled`).
+  `tracking` is the ride's timeline for whoever booked it (SPEC.md §3.F —
+  the rider today, a linked proxy once those exist), built from the
+  `ride_events` log (0009) and reachable from `en-route` and `complete`.
+  It shows no ETA on purpose: there's no routing/map data behind it.
 - `app/(driver)/` — the driver-facing flow: `driver-home` (availability
   toggle), `incoming` (a live ride request to accept/decline),
   `active-ride` (matched → en route → arrived/PIN → in progress →
@@ -76,6 +80,12 @@ the app by phase/role rather than by feature:
   drivers get it, and the rider's `en-route` says "your driver had to
   cancel" and returns to `matching` (`?notice=driver_cancelled`).
 - `app/_layout.tsx` wraps everything in `AuthProvider` → `ProfileProvider`.
+- Back arrows call `backOr(fallback)` (`lib/nav.ts`), never `router.back()`
+  directly. Screens here are routinely reached with no history behind them —
+  a direct URL or refresh, or one of the app's own `router.replace`
+  redirects (Rider Home → matching/en-route, Driver Home → active-ride) —
+  and `back()` there does nothing but log "The action 'GO_BACK' was not
+  handled by any navigator", leaving the arrow dead.
 
 **Two separate pieces of client state, not one** — don't conflate them:
 - `contexts/AuthContext.tsx` — real Supabase session/auth state (`role` comes
@@ -137,6 +147,13 @@ trail — 0002 → 0006 fixed each other's bugs, worth reading in order; note
 - An `UPDATE` that matches zero rows (lost race, RLS-filtered) is **not** an
   error from PostgREST — chain `.select()` and check the returned rows when
   success matters (see `acceptRideRequest`).
+- `ride_events` (0009) is the status history, written **only** by the
+  `log_ride_event` trigger: it has no client INSERT/UPDATE/DELETE policies,
+  so the log can't be forged or rewritten. Reads are limited to the ride's
+  `requested_by` and its *current* `matched_driver_id` — so a driver who
+  hands a ride back loses access to that ride's history, and the rider can
+  no longer read that driver's profile either (an older "matched with…" step
+  then reads "Driver assigned").
 
 **Session storage note**: Supabase auth persists sessions via
 `AsyncStorage`, which on web is backed by the browser's `localStorage` —

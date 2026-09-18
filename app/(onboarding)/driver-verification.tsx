@@ -1,5 +1,6 @@
 import { ReactNode, useState } from 'react';
 import { router } from 'expo-router';
+import { backOr } from '../../lib/nav';
 import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, type } from '../../constants/theme';
@@ -51,7 +52,7 @@ export default function DriverVerification() {
   return (
     <Screen>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-        <TopBar title="Basic Capability Check" onBack={() => router.back()} />
+        <TopBar title="Basic Capability Check" onBack={() => backOr('/(driver)/driver-home')} />
 
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
           <View style={{ gap: 6 }}>

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { router } from 'expo-router';
+import { backOr } from '../../lib/nav';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, type } from '../../constants/theme';
@@ -90,7 +91,7 @@ export default function BookRide() {
   return (
     <Screen>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-        <TopBar title="Book a Ride" onBack={() => router.back()} right={<Avatar initials={initialsFrom(rider.fullName)} size={40} />} />
+        <TopBar title="Book a Ride" onBack={() => backOr('/(rider)/home')} right={<Avatar initials={initialsFrom(rider.fullName)} size={40} />} />
 
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
           <Card>

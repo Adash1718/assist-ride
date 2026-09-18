@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
+import { backOr } from '../../lib/nav';
 import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, type } from '../../constants/theme';
@@ -106,7 +107,7 @@ export default function DriverEnRoute() {
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
         <TopBar
           title={copy.title}
-          onBack={() => router.back()}
+          onBack={() => backOr('/(rider)/home')}
           right={
             <View
               style={{
@@ -218,6 +219,13 @@ export default function DriverEnRoute() {
               </Hint>
             </Card>
           )}
+
+          <Text
+            onPress={() => router.push({ pathname: '/(rider)/tracking', params: { rideId } })}
+            style={{ alignSelf: 'center', padding: 6, fontSize: 13, fontWeight: '700', color: colors.textSecondary }}
+          >
+            View ride timeline
+          </Text>
         </ScrollView>
 
         {!riding && !driverCancelled && (

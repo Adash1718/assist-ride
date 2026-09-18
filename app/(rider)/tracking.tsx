@@ -1,42 +1,170 @@
-import { router } from 'expo-router';
-import { ReactNode } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { ReactNode, useEffect, useState } from 'react';
+import { router, useLocalSearchParams } from 'expo-router';
+import { backOr } from '../../lib/nav';
+import { Linking, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing } from '../../constants/theme';
 import { Avatar, Card, Hint, Screen, SectionLabel, TopBar } from '../../components/ui';
-import { AlertCircleIcon, CarIcon, CheckIcon, MessageIcon, PhoneIcon } from '../../components/Icon';
+import { AlertCircleIcon, CarIcon, CheckIcon, ClockIcon, PhoneIcon } from '../../components/Icon';
 import { useProfiles } from '../../contexts/ProfileContext';
 import { initialsFrom } from '../../lib/format';
+import {
+  fetchMatchedDriver,
+  fetchRideEvents,
+  MatchedDriverInfo,
+  RideEvent,
+  RideStatus,
+  subscribeToRideEvents,
+} from '../../lib/rideApi';
+import { useLiveRide } from '../../lib/useLiveRide';
+
+// SPEC.md §3.F — the ride's timeline for whoever booked it: the rider today,
+// a linked proxy once proxy accounts exist (the event log's RLS already keys
+// off requested_by, the same check as ride_requests). Everything here comes
+// from the trigger-written log in migration 0009; no ETA is shown because
+// there's no routing/map data to base one on.
 
 type StepState = 'done' | 'current' | 'pending';
 
-const FALLBACK_DRIVER_NAME = 'James O.';
-const FALLBACK_VEHICLE = 'Silver Honda Odyssey';
+// What a rider sees for each logged status. A second (or later) 'requested'
+// means a driver handed the ride back before pickup, which is worth naming
+// rather than repeating "Ride requested".
+function stepLabel(status: RideStatus, isFirst: boolean, driverName: string | null): string {
+  switch (status) {
+    case 'requested':
+      return isFirst ? 'Ride requested' : 'Driver cancelled — finding a new driver';
+    case 'matched':
+      return driverName ? `Matched with ${driverName}` : 'Driver assigned';
+    case 'driver_en_route':
+      return 'Driver on the way';
+    case 'arrived':
+      return 'Driver arrived at pickup';
+    case 'in_progress':
+      return 'Picked up';
+    case 'completed':
+      return 'Completed';
+    case 'cancelled':
+      return 'Ride cancelled';
+    case 'no_show':
+      return 'Marked as a no-show';
+    default:
+      return status;
+  }
+}
 
-export default function ProxyTracking() {
-  const { rider, driver } = useProfiles();
+// Steps still ahead, once the ride is under way.
+const REMAINING_AFTER: Partial<Record<RideStatus, RideStatus[]>> = {
+  requested: ['matched', 'driver_en_route', 'arrived', 'in_progress', 'completed'],
+  matched: ['driver_en_route', 'arrived', 'in_progress', 'completed'],
+  driver_en_route: ['arrived', 'in_progress', 'completed'],
+  arrived: ['in_progress', 'completed'],
+  in_progress: ['completed'],
+};
+
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function callNumber(phone: string) {
+  const digits = phone.replace(/[^\d+]/g, '');
+  if (digits) Linking.openURL(`tel:${digits}`);
+}
+
+export default function RideTracking() {
+  const { rider } = useProfiles();
+  const { rideId } = useLocalSearchParams<{ rideId: string }>();
+  const { ride, loading } = useLiveRide(rideId);
+  const [events, setEvents] = useState<RideEvent[]>([]);
+  const [driverInfo, setDriverInfo] = useState<MatchedDriverInfo | null>(null);
+
+  useEffect(() => {
+    if (!rideId) return;
+    let cancelled = false;
+    const unsubscribe = subscribeToRideEvents(rideId, (event) => {
+      setEvents((prev) => (prev.some((e) => e.id === event.id) ? prev : [...prev, event]));
+    });
+    (async () => {
+      const { data } = await fetchRideEvents(rideId);
+      if (cancelled) return;
+      // Merge rather than replace: a live event may already have arrived.
+      setEvents((prev) => {
+        const seen = new Set(prev.map((e) => e.id));
+        return [...prev, ...data.filter((e) => !seen.has(e.id))].sort((a, b) => a.at.localeCompare(b.at));
+      });
+    })();
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [rideId]);
+
+  // Only readable while this driver is the ride's matched driver (RLS), so a
+  // driver who handed the ride back can't be named after a reload — those
+  // steps read "Driver assigned" instead.
+  const matchedDriverId = ride?.matchedDriverId;
+  useEffect(() => {
+    if (!matchedDriverId) return;
+    (async () => {
+      const { data } = await fetchMatchedDriver(matchedDriverId);
+      if (data) setDriverInfo(data);
+    })();
+  }, [matchedDriverId]);
+
   const riderFirstName = rider.fullName.trim().split(' ')[0] || 'this rider';
-  const driverName = driver.fullName.trim() || FALLBACK_DRIVER_NAME;
-  const vehicle = driver.vehicle.trim() || FALLBACK_VEHICLE;
+  const driverName = driverInfo?.fullName.trim() || null;
+  const vehicleLine = driverInfo?.vehicle.trim()
+    ? `${driverInfo.vehicle}${driverInfo.plate ? ` · Plate ${driverInfo.plate}` : ''}`
+    : 'Vehicle details unavailable';
+
+  if (loading) return null;
+
+  const sorted = [...events].sort((a, b) => a.at.localeCompare(b.at));
+  const lastStatus = sorted.length > 0 ? sorted[sorted.length - 1].status : ride?.status;
+  const pending = (lastStatus && REMAINING_AFTER[lastStatus]) ?? [];
+  const totalRows = sorted.length + pending.length;
 
   return (
     <Screen>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-        <TopBar title={`Tracking ${riderFirstName}'s Ride`} onBack={() => router.back()} />
+        <TopBar title={`Tracking ${riderFirstName}'s Ride`} onBack={() => backOr('/(rider)/home')} />
 
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
           <Card>
             <SectionLabel>Status</SectionLabel>
-            <TimelineStep state="done" label="Requested" time="2:04 PM" icon={<CheckIcon size={14} color={colors.positiveDark} />} />
-            <TimelineStep
-              state="done"
-              label={`Matched with ${driverName}`}
-              time="2:06 PM"
-              icon={<CheckIcon size={14} color={colors.positiveDark} />}
-            />
-            <TimelineStep state="current" label="Driver arriving" time="~8 min" icon={<CarIcon size={14} color={colors.accentDark} />} />
-            <TimelineStep state="pending" label="Picked up" isLast={false} />
-            <TimelineStep state="pending" label="Completed" isLast />
+            {sorted.length === 0 && <Hint>No status updates yet.</Hint>}
+            {sorted.map((event, i) => {
+              const isLastLogged = i === sorted.length - 1;
+              const state: StepState = isLastLogged ? 'current' : 'done';
+              return (
+                <TimelineStep
+                  key={event.id}
+                  state={state}
+                  // Only name the driver on a step that refers to the ride's
+                  // current driver — an earlier match was a different driver
+                  // (handed back since), whose profile RLS won't show us.
+                  label={stepLabel(event.status, i === 0, event.driverId && event.driverId === matchedDriverId ? driverName : null)}
+                  time={formatTime(event.at)}
+                  icon={
+                    state === 'done' ? (
+                      <CheckIcon size={14} color={colors.positiveDark} />
+                    ) : (
+                      <CarIcon size={14} color={colors.accentDark} />
+                    )
+                  }
+                  isLast={i === totalRows - 1}
+                />
+              );
+            })}
+            {pending.map((status, i) => (
+              <TimelineStep
+                key={`pending-${status}`}
+                state="pending"
+                label={stepLabel(status, false, driverName)}
+                icon={<ClockIcon size={13} color={colors.textTertiary} />}
+                isLast={sorted.length + i === totalRows - 1}
+              />
+            ))}
           </Card>
 
           <View
@@ -46,32 +174,43 @@ export default function ProxyTracking() {
               backgroundColor: colors.surfaceAlt,
               borderWidth: 1,
               borderColor: colors.border,
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
-          />
+          >
+            <Hint>Live map not available yet</Hint>
+          </View>
 
-          <Card style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Avatar initials={initialsFrom(driverName)} size={44} />
-            <View style={{ flex: 1, marginLeft: spacing.md }}>
-              <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text }}>
-                {driverName} · {vehicle}
-              </Text>
-              <Hint>Arriving in ~8 min</Hint>
-            </View>
-          </Card>
+          {driverName && (
+            <Card style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Avatar initials={initialsFrom(driverName)} size={44} />
+              <View style={{ flex: 1, marginLeft: spacing.md }}>
+                <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text }}>{driverName}</Text>
+                <Hint>{vehicleLine}</Hint>
+              </View>
+            </Card>
+          )}
 
           <Card>
-            <Hint>You'll get a notification at every step, since you're not riding along.</Hint>
+            <Hint>This page updates itself as the ride progresses — no need to refresh.</Hint>
           </Card>
 
           <Card style={{ paddingVertical: 4, gap: 0 }}>
-            <ContactRow icon={<PhoneIcon size={16} />} label={`Call ${riderFirstName}`} />
-            <ContactRow icon={<MessageIcon size={16} />} label="Message Driver" />
+            {rider.phone.trim() !== '' && (
+              <ContactRow
+                icon={<PhoneIcon size={16} />}
+                label={`Call ${riderFirstName}`}
+                sublabel={rider.phone}
+                onPress={() => callNumber(rider.phone)}
+              />
+            )}
             <ContactRow
               icon={<AlertCircleIcon size={16} color={colors.alertDark} />}
               label="Call 911"
               labelColor={colors.alertDark}
               sublabel="For real emergencies only"
               iconBg={colors.alertSoft}
+              onPress={() => callNumber('911')}
               isLast
             />
           </Card>
@@ -118,6 +257,7 @@ function ContactRow({
   sublabel,
   labelColor = colors.text,
   iconBg = colors.surfaceAlt,
+  onPress,
   isLast,
 }: {
   icon: ReactNode;
@@ -125,10 +265,12 @@ function ContactRow({
   sublabel?: string;
   labelColor?: string;
   iconBg?: string;
+  onPress?: () => void;
   isLast?: boolean;
 }) {
   return (
-    <View
+    <Pressable
+      onPress={onPress}
       style={{
         flexDirection: 'row',
         alignItems: 'center',
@@ -145,6 +287,6 @@ function ContactRow({
         <Text style={{ fontWeight: '700', fontSize: 14.5, color: labelColor }}>{label}</Text>
         {sublabel && <Hint>{sublabel}</Hint>}
       </View>
-    </View>
+    </Pressable>
   );
 }
