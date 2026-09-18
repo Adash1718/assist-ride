@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import * as ImagePicker from 'expo-image-picker';
-import { Image, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { colors, spacing, type } from '../constants/theme';
 import {
   Avatar,
@@ -92,15 +91,6 @@ export function RiderProfileForm({
   const phoneError = rider.phone !== '' && !isValidPhone(rider.phone) ? '10-digit US phone number required' : undefined;
   const dobError = rider.dateOfBirth !== '' && !isValidDob(rider.dateOfBirth) ? 'Enter a valid past date (MM/DD/YYYY)' : undefined;
   const canSubmit = rider.fullName.trim() !== '' && isValidPhone(rider.phone) && isValidDob(rider.dateOfBirth);
-
-  async function pickPhoto() {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) return;
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.6 });
-    if (!result.canceled && result.assets?.[0]?.uri) {
-      setRider({ photoUri: result.assets[0].uri });
-    }
-  }
 
   async function addContact(input: MedicalContactInput) {
     const base = { name: input.name, phone: input.phone, address: input.address, email: input.email };
@@ -263,28 +253,7 @@ export function RiderProfileForm({
 
           <Card>
             <SectionLabel>Help a driver recognize you</SectionLabel>
-            <Pressable onPress={pickPhoto}>
-              {rider.photoUri ? (
-                <Image source={{ uri: rider.photoUri }} style={{ width: '100%', height: 140, borderRadius: 14 }} resizeMode="cover" />
-              ) : (
-                <View
-                  style={{
-                    height: 110,
-                    borderRadius: 14,
-                    borderWidth: 1.5,
-                    borderColor: colors.border,
-                    borderStyle: 'dashed',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 6,
-                    backgroundColor: colors.surfaceAlt,
-                  }}
-                >
-                  <CameraIcon color={colors.textTertiary} />
-                  <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textTertiary }}>Add photo</Text>
-                </View>
-              )}
-            </Pressable>
+            <Hint>Drivers see this description at pickup — no photo is collected.</Hint>
             <Text style={type.label}>What you'll look like / be wearing</Text>
             <TextInput
               value={rider.idDescription}

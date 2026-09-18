@@ -214,7 +214,7 @@ export default function DriverEnRoute() {
           {!driverCancelled && (
             <Card>
               <Hint>
-                We shared {riderFirstName}'s photo &amp; description with {driverFirstName} so they can recognize {riderFirstName} at
+                We shared {riderFirstName}'s description with {driverFirstName} so they can recognize {riderFirstName} at
                 pickup.
               </Hint>
             </Card>

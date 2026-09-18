@@ -1,7 +1,7 @@
 import { Text, View } from 'react-native';
 import { colors, spacing } from '../constants/theme';
 import { Card, Hint, SectionLabel } from './ui';
-import { CameraIcon, MapPinIcon, UsersIcon } from './Icon';
+import { MapPinIcon, UsersIcon } from './Icon';
 import { RideRequestData } from '../lib/rideApi';
 
 // What a driver needs to know about a ride, shared by the incoming-request
@@ -56,21 +56,9 @@ export function RecognizeRiderCard({ ride }: { ride: RideRequestData }) {
   return (
     <Card>
       <SectionLabel>Recognizing the rider</SectionLabel>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
-        <View
-          style={{
-            width: 64,
-            height: 64,
-            borderRadius: 12,
-            backgroundColor: colors.surfaceAlt,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <CameraIcon color={colors.textTertiary} />
-        </View>
-        <Text style={{ flex: 1, fontSize: 13.5, color: colors.textSecondary, lineHeight: 19 }}>{description}</Text>
-      </View>
+      {/* Description only — identification photos are deferred (0012), so a
+          photo placeholder here would promise something that never arrives. */}
+      <Text style={{ fontSize: 13.5, color: colors.textSecondary, lineHeight: 19 }}>{description}</Text>
     </Card>
   );
 }
