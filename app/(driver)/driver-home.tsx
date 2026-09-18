@@ -90,8 +90,8 @@ export default function DriverHome() {
   // requests, and rides another driver handed back before pickup — and (b)
   // catch up on any ride ALREADY open (a driver late to come online, or
   // back here right after declining) — RLS already excludes rides this
-  // driver declined, so either path only surfaces a ride still up for grabs
-  // (see SPEC.md for capability-tag filtering as a documented next step).
+  // driver declined, and (0010) rides this driver can't actually serve, so
+  // either path only surfaces a ride that's genuinely theirs to take.
   useFocusEffect(
     useCallback(() => {
       if (checking || !userId) return;

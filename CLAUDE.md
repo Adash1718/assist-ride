@@ -100,9 +100,12 @@ the app by phase/role rather than by feature:
 - `supabase.ts` — the client singleton (see Environment above).
 - `profileApi.ts` — profile + emergency/medical contact CRUD.
 - `rideApi.ts` — ride request CRUD, status transitions, and the Realtime
-  subscription wiring for live matching. Matching is intentionally minimal
-  (any available driver sees any `requested` ride — no capability/tag
-  filtering yet).
+  subscription wiring for live matching. Which rides a driver may see is
+  **not** decided here: `driver_can_serve()` (0010) is enforced in the
+  drivers' SELECT policy, so the catch-up query and the live feed filter
+  themselves (SPEC.md §3.C2 lists the hard rules vs the advisory ones).
+  Ranking between eligible drivers doesn't exist yet — first come, first
+  served.
 - `useLiveRide.ts` — one ride kept current from a fetch plus its Realtime
   subscription (used by `matching`, `en-route`, `active-ride`). Once a live
   event has arrived it wins over the fetch. Don't merge by "furthest

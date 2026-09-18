@@ -45,7 +45,10 @@ export default function BookRide() {
   const [scheduledTime, setScheduledTime] = useState('');
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [timePickerOpen, setTimePickerOpen] = useState(false);
-  const [companions, setCompanions] = useState(1);
+  // Nobody riding along unless the requester says so — and since 0010 matches
+  // on the driver's companion_seats, a stray default would filter out drivers
+  // for a companion who doesn't exist.
+  const [companions, setCompanions] = useState(0);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);

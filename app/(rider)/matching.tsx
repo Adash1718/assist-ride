@@ -20,9 +20,9 @@ export default function Matching() {
   const riderFirstName = rider.fullName.trim().split(' ')[0] || 'this rider';
   const afterDriverCancel = notice === 'driver_cancelled';
 
-  // Real matching: wait for a driver to accept this exact ride row (any
-  // available driver can see it — see SPEC.md for capability-tag filtering
-  // as a documented next step). No polling — Realtime pushes the update, and
+  // Real matching: wait for a driver to accept this exact ride row (only
+  // drivers who can serve the rider's needs see it at all — driver_can_serve,
+  // 0010). No polling — Realtime pushes the update, and
   // useLiveRide's fetch covers a driver who accepted before the subscription
   // was live. This is also where a ride lands after its driver hands it back
   // before pickup: it's simply back in the search.

@@ -3,9 +3,12 @@ import { supabase } from './supabase';
 import { DriverProfileData, RiderProfileData } from '../contexts/ProfileContext';
 
 // Real ride-request wiring (SPEC.md §2.4, supabase/migrations/0002_*.sql).
-// Matching is intentionally minimal for this pass: any available driver
-// sees any 'requested' ride — no capability/tag filtering yet (see SPEC.md
-// for that as a documented next step).
+// Which open rides a driver may see isn't decided in this file: the drivers'
+// SELECT policy calls driver_can_serve() (0010), so every query and
+// subscription here is already filtered to rides they can actually serve —
+// ramp/stowage for wheelchairs, transfers, cognitive support, companion
+// seats (SPEC.md §3.C2). Ranking between eligible drivers isn't built:
+// first come, first served.
 
 export type RideStatus =
   | 'requested'

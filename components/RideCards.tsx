@@ -41,6 +41,12 @@ export function RiderNeedsCard({ ride }: { ride: RideRequestData }) {
           <Hint>No specific needs on file.</Hint>
         )}
       </View>
+      {/* Matching (0010) guarantees this driver meets the ride's hard
+          requirements, but a service animal is never a filter — it's a legal
+          obligation — so say so where the driver decides. */}
+      {(ride.needsSnapshot.assistanceNeeds ?? []).includes('Service animal') && (
+        <Hint>The rider is travelling with a service animal, which can't be refused.</Hint>
+      )}
     </Card>
   );
 }
