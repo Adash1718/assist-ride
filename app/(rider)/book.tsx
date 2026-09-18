@@ -21,19 +21,10 @@ import { CalendarIcon, ClockIcon, MapPinIcon } from '../../components/Icon';
 import { useProfiles } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { initialsFrom } from '../../lib/format';
-import { formatDateLong } from '../../lib/dateTime';
+import { formatDateLong, parseTimeLabel } from '../../lib/dateTime';
 import { DatePickerModal } from '../../components/DatePickerModal';
 import { TimePickerModal } from '../../components/TimePickerModal';
 import { buildNeedsSnapshot, createRideRequest } from '../../lib/rideApi';
-
-// "2:30 PM" -> {hour: 14, minute: 30} (24h), for combining with a picked date.
-function parseTimeLabel(label: string): { hour: number; minute: number } {
-  const m = label.match(/^(\d{1,2}):(\d{2})\s?(AM|PM)$/i);
-  if (!m) return { hour: 0, minute: 0 };
-  let hour = parseInt(m[1], 10) % 12;
-  if (m[3].toUpperCase() === 'PM') hour += 12;
-  return { hour, minute: parseInt(m[2], 10) };
-}
 
 export default function BookRide() {
   const { rider } = useProfiles();

@@ -28,6 +28,17 @@ export function formatMonthYear(year: number, month: number): string {
   return new Date(year, month, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
+// "2:30 PM" -> {hour: 14, minute: 30} (24h), for combining with a picked date.
+// Shared by the booking screen and the matching screen's "switch to a
+// scheduled time".
+export function parseTimeLabel(label: string): { hour: number; minute: number } {
+  const m = label.match(/^(\d{1,2}):(\d{2})\s?(AM|PM)$/i);
+  if (!m) return { hour: 0, minute: 0 };
+  let hour = parseInt(m[1], 10) % 12;
+  if (m[3].toUpperCase() === 'PM') hour += 12;
+  return { hour, minute: parseInt(m[2], 10) };
+}
+
 export type TimeSlot = { label: string; hour: number; minute: number };
 
 // 30-minute slots for the given date; when that date is today, slots at or

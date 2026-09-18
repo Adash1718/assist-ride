@@ -56,6 +56,7 @@ export type RideRequestData = {
   status: RideStatus;
   matchedDriverId: string | null;
   pin: string | null;
+  createdAt: string; // ISO — when the ride was booked (how long it's been searching)
 };
 
 function mapRow(r: any): RideRequestData {
@@ -73,6 +74,7 @@ function mapRow(r: any): RideRequestData {
     status: r.status,
     matchedDriverId: r.matched_driver_id,
     pin: r.pin,
+    createdAt: r.created_at,
   };
 }
 
@@ -159,6 +161,36 @@ export async function fetchActiveRideForDriver(driverId: string): Promise<{ data
     .maybeSingle();
   if (error) return { data: null, error: error.message };
   return { data: data ? mapRow(data) : null, error: null };
+}
+
+// How many drivers could actually take this ride right now: available, able
+// to serve its needs, haven't declined it, and not already on another ride
+// (migration 0011). 0 means nobody is coming until someone comes online or a
+// requirement changes — which is the difference between "still looking" and
+// "no drivers available" on the matching screen. Requester-only, enforced in
+// the function.
+export async function countEligibleDriversForRide(rideId: string): Promise<{ count: number | null; error: string | null }> {
+  const { data, error } = await supabase.rpc('count_eligible_drivers_for_ride', { p_ride_id: rideId });
+  if (error) return { count: null, error: error.message };
+  return { count: typeof data === 'number' ? data : null, error: null };
+}
+
+// Move a ride that's still searching to a scheduled time, keeping the SAME
+// ride row so the rider doesn't have to rebook. Conditional on 'requested' so
+// it can't rewrite a ride a driver has just accepted.
+// NOTE: scheduled rides are still offered to drivers immediately — holding
+// them back until closer to requested_time isn't built yet (SPEC.md §2.4), so
+// don't tell the rider we'll wait until then.
+export async function rescheduleRideRequest(rideId: string, whenISO: string): Promise<{ error: string | null }> {
+  const { data, error } = await supabase
+    .from('ride_requests')
+    .update({ ride_mode: 'scheduled', requested_time: whenISO, updated_at: new Date().toISOString() })
+    .eq('id', rideId)
+    .eq('status', 'requested')
+    .select('id');
+  if (error) return { error: error.message };
+  if (!data || data.length === 0) return { error: "This ride is no longer waiting for a driver, so it can't be rescheduled." };
+  return { error: null };
 }
 
 // The rider's ride that's still going, if any (see OPEN_RIDE_STATUSES).

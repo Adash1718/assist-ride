@@ -60,6 +60,12 @@ the app by phase/role rather than by feature:
   the rider-side counterpart of the driver double-booking fix (runs in
   `useFocusEffect`, same reason as Driver Home). A rider cancel lands on
   Home with a "Your ride was cancelled" notice (`?notice=cancelled`).
+  `matching` has three states, driven by
+  `countEligibleDriversForRide()` (0011) plus the ride's age: searching,
+  "no drivers available right now" (count 0 — it names the blocking need),
+  and "still looking — N min" after 2 minutes when eligible drivers do
+  exist. It never auto-cancels; the rider can re-check, cancel, or move the
+  same ride row to a scheduled time (`rescheduleRideRequest`).
   `tracking` is the ride's timeline for whoever booked it (SPEC.md §3.F —
   the rider today, a linked proxy once those exist), built from the
   `ride_events` log (0009) and reachable from `en-route` and `complete`.
