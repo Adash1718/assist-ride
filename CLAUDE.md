@@ -9,9 +9,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Assist Ride — a specialized rideshare app (Expo/React Native) for riders who
 need physical or communication assistance, matched with drivers who can
 provide it. Full product spec, data model, and decision log lives in
-`../SPEC.md` (one level up, shared with a sibling homework folder) — read it
-before making product/schema decisions, and update it when a decision is
-made or a milestone lands.
+`docs/SPEC.md` — read it before making product/schema decisions, and update
+it when a decision is made or a milestone lands. (It used to live one level
+up at `../SPEC.md`, shared with a sibling homework folder; that copy is now
+a snapshot left in place for the sibling folder. `docs/SPEC.md` is the one
+to edit.)
 
 ## Commands
 
