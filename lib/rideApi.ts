@@ -33,6 +33,31 @@ export const PRE_PICKUP_STATUSES: RideStatus[] = ['matched', 'driver_en_route', 
 // Rider Home sends a rider with one of these straight to it.
 export const OPEN_RIDE_STATUSES: RideStatus[] = ['requested', ...ACTIVE_RIDE_STATUSES];
 
+// How long before its requested time a scheduled ride enters the search.
+// MUST match the interval in migration 0013's policy — the database decides
+// what drivers can see; this is only so the rider's screen can say what's
+// happening ("we'll start looking about an hour before").
+export const SCHEDULED_LEAD_MINUTES = 60;
+const SCHEDULED_LEAD_MS = SCHEDULED_LEAD_MINUTES * 60 * 1000;
+
+// A scheduled ride that hasn't entered the search yet: no driver can see it,
+// so nobody is looking and the rider shouldn't be told otherwise.
+export function isAwaitingSchedule(ride: RideRequestData, now: number = Date.now()): boolean {
+  if (ride.rideMode !== 'scheduled') return false;
+  const at = new Date(ride.requestedTime).getTime();
+  return !Number.isNaN(at) && at - now > SCHEDULED_LEAD_MS;
+}
+
+// When this ride actually started (or will start) being offered to drivers —
+// booking time for on-demand, the lead window for a scheduled ride. "Still
+// looking for 14 hours" would be nonsense for a ride booked yesterday.
+export function searchStartedAt(ride: RideRequestData): number {
+  const created = new Date(ride.createdAt).getTime();
+  if (ride.rideMode !== 'scheduled') return created;
+  const at = new Date(ride.requestedTime).getTime();
+  return Number.isNaN(at) ? created : Math.max(created, at - SCHEDULED_LEAD_MS);
+}
+
 export type NeedsSnapshot = {
   riderName: string;
   mobilityAid: string;

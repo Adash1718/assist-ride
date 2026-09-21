@@ -11,6 +11,10 @@ import { initialsFrom } from '../../lib/format';
 import { ensureDriverProfileRow, fetchDriverProfile, isDriverProfileComplete, setDriverAvailability } from '../../lib/profileApi';
 import { fetchActiveRideForDriver, fetchOldestOpenRequest, subscribeToIncomingRequests } from '../../lib/rideApi';
 
+// How often Driver Home re-checks for rides that became offerable without any
+// row changing — i.e. scheduled rides reaching their lead window (0013).
+const MATURING_RIDE_CHECK_MS = 60000;
+
 export default function DriverHome() {
   const { driver, setDriver } = useProfiles();
   const { session, loading, signOut } = useAuth();
@@ -98,6 +102,7 @@ export default function DriverHome() {
       let cancelled = false;
       let offered = false;
       let unsubscribe: (() => void) | null = null;
+      let catchUp: ReturnType<typeof setInterval> | null = null;
       const offer = (rideId: string) => {
         if (cancelled || offered) return; // catch-up and the subscription can both find the same ride
         offered = true;
@@ -115,10 +120,19 @@ export default function DriverHome() {
         unsubscribe = subscribeToIncomingRequests((ride) => offer(ride.id));
         const { data } = await fetchOldestOpenRequest();
         if (data) offer(data.id);
+        // A scheduled ride entering its lead window (0013) is the passage of
+        // time, not a row change, so Realtime has nothing to push — without
+        // this re-check a driver sitting here would never be offered one.
+        catchUp = setInterval(async () => {
+          if (cancelled || offered) return;
+          const { data: open } = await fetchOldestOpenRequest();
+          if (open) offer(open.id);
+        }, MATURING_RIDE_CHECK_MS);
       })();
       return () => {
         cancelled = true;
         unsubscribe?.();
+        if (catchUp) clearInterval(catchUp);
       };
     }, [checking, userId, confirmedAvailable])
   );

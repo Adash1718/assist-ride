@@ -65,7 +65,11 @@ the app by phase/role rather than by feature:
   "no drivers available right now" (count 0 — it names the blocking need),
   and "still looking — N min" after 2 minutes when eligible drivers do
   exist. It never auto-cancels; the rider can re-check, cancel, or move the
-  same ride row to a scheduled time (`rescheduleRideRequest`).
+  same ride row to a scheduled time (`rescheduleRideRequest`). A fourth
+  state covers a scheduled ride before its lead window (0013): nobody can
+  see it yet, so it says so and doesn't run the driver count. "Still
+  looking" counts from `searchStartedAt()`, not from booking — a ride
+  scheduled for tomorrow hasn't been searching since today.
   `tracking` is the ride's timeline for whoever booked it (SPEC.md §3.F —
   the rider today, a linked proxy once those exist), built from the
   `ride_events` log (0009) and reachable from `en-route` and `complete`.

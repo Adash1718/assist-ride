@@ -14,8 +14,11 @@ import {
   ACTIVE_RIDE_STATUSES,
   cancelRideRequest,
   countEligibleDriversForRide,
+  isAwaitingSchedule,
   rescheduleRideRequest,
   RideRequestData,
+  SCHEDULED_LEAD_MINUTES,
+  searchStartedAt,
 } from '../../lib/rideApi';
 import { useLiveRide } from '../../lib/useLiveRide';
 
@@ -24,6 +27,10 @@ import { useLiveRide } from '../../lib/useLiveRide';
 // or changed: the rider gets information and a choice (SPEC.md §4).
 const STILL_LOOKING_AFTER_MS = 2 * 60 * 1000;
 const TICK_MS = 15000;
+
+function formatTime(d: Date): string {
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
 
 // Why nobody can take this ride, in the rider's own terms, derived from the
 // needs it was booked with (SPEC.md §3.C2 lists which needs are hard
@@ -70,16 +77,21 @@ export default function Matching() {
     if (count !== null) setEligible(count);
   }, [rideId]);
 
-  // When matching opens, and on an explicit refresh — not on a timer, so this
-  // doesn't poll the database while a rider sits on the screen.
-  useEffect(() => {
-    recheck();
-  }, [recheck]);
-
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => clearInterval(t);
   }, []);
+
+  // Scheduled and not yet in its lead window (0013): no driver can see this
+  // ride, so who happens to be online right now says nothing about it.
+  const awaitingSchedule = ride ? isAwaitingSchedule(ride, now) : false;
+
+  // Counted when the screen has a ride worth counting for — and again if a
+  // scheduled ride matures while the rider is sitting here. Never on a timer.
+  const shouldCount = !!ride && !awaitingSchedule;
+  useEffect(() => {
+    if (shouldCount) recheck();
+  }, [shouldCount, recheck]);
 
   // Real matching: wait for a driver to accept this exact ride row (only
   // drivers who can serve the rider's needs see it at all — driver_can_serve,
@@ -102,9 +114,11 @@ export default function Matching() {
     }
   }, [status]);
 
-  const elapsedMs = ride ? Math.max(0, now - new Date(ride.createdAt).getTime()) : 0;
+  // Time since the ride entered the search, not since it was booked — a ride
+  // scheduled for tomorrow hasn't been "looking" since yesterday.
+  const elapsedMs = ride ? Math.max(0, now - searchStartedAt(ride)) : 0;
   const elapsedMin = Math.floor(elapsedMs / 60000);
-  const pastThreshold = elapsedMs >= STILL_LOOKING_AFTER_MS;
+  const pastThreshold = !awaitingSchedule && elapsedMs >= STILL_LOOKING_AFTER_MS;
 
   // One extra check the moment it starts taking a while, so "still looking"
   // isn't shown on a count from two minutes ago.
@@ -115,8 +129,13 @@ export default function Matching() {
     }
   }, [pastThreshold, recheck]);
 
-  const phase: 'searching' | 'stillLooking' | 'noDrivers' =
-    eligible === 0 ? 'noDrivers' : pastThreshold ? 'stillLooking' : 'searching';
+  const phase: 'scheduled' | 'searching' | 'stillLooking' | 'noDrivers' = awaitingSchedule
+    ? 'scheduled'
+    : eligible === 0
+      ? 'noDrivers'
+      : pastThreshold
+        ? 'stillLooking'
+        : 'searching';
 
   async function handleCancel() {
     if (!rideId) return;
@@ -152,13 +171,18 @@ export default function Matching() {
       ? `No available driver can ${phrases.join(' and ')} right now.`
       : 'No drivers are available right now.';
 
+  const scheduledAt = ride && ride.rideMode === 'scheduled' ? new Date(ride.requestedTime) : null;
+  const scheduledLabel = scheduledAt && !Number.isNaN(scheduledAt.getTime()) ? `${formatDateLong(scheduledAt)} at ${formatTime(scheduledAt)}` : '';
+
   const title = afterDriverCancel
     ? 'Finding a New Driver'
-    : phase === 'noDrivers'
-      ? 'No Drivers Available'
-      : phase === 'stillLooking'
-        ? 'Still Looking'
-        : 'Finding a Driver';
+    : phase === 'scheduled'
+      ? 'Ride Scheduled'
+      : phase === 'noDrivers'
+        ? 'No Drivers Available'
+        : phase === 'stillLooking'
+          ? 'Still Looking'
+          : 'Finding a Driver';
 
   return (
     <Screen>
@@ -177,9 +201,9 @@ export default function Matching() {
             <Card style={{ backgroundColor: colors.positiveSoft, borderColor: colors.positive }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <CalendarIcon size={16} color={colors.positiveDark} />
-                <Text style={{ fontSize: 15, fontWeight: '700', color: colors.positiveDark }}>Scheduled for {rescheduledFor}</Text>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: colors.positiveDark }}>Moved to {rescheduledFor}</Text>
               </View>
-              <Hint>We're still looking now as well — this ride stays open to drivers rather than waiting until then.</Hint>
+              <Hint>We'll start looking for a driver about {SCHEDULED_LEAD_MINUTES} minutes before.</Hint>
             </Card>
           )}
 
@@ -196,6 +220,8 @@ export default function Matching() {
             >
               {phase === 'noDrivers' ? (
                 <AlertCircleIcon size={32} color={colors.alertDark} />
+              ) : phase === 'scheduled' ? (
+                <CalendarIcon size={30} color={colors.accentDark} />
               ) : phase === 'stillLooking' ? (
                 <ClockIcon size={30} color={colors.accentDark} />
               ) : (
@@ -204,7 +230,15 @@ export default function Matching() {
             </View>
 
             <View style={{ alignItems: 'center', gap: 8 }}>
-              {phase === 'noDrivers' ? (
+              {phase === 'scheduled' ? (
+                <>
+                  <Text style={[type.heading, { color: colors.text, textAlign: 'center' }]}>Booked for {scheduledLabel}</Text>
+                  <Text style={{ fontSize: 14, color: colors.textSecondary, textAlign: 'center', lineHeight: 20 }}>
+                    Nobody is looking yet — we start matching about {SCHEDULED_LEAD_MINUTES} minutes before pickup, and you'll hear as
+                    soon as a driver accepts. There's nothing to do until then.
+                  </Text>
+                </>
+              ) : phase === 'noDrivers' ? (
                 <>
                   <Text style={[type.heading, { color: colors.text, textAlign: 'center' }]}>No drivers available right now</Text>
                   <Text style={{ fontSize: 14, color: colors.textSecondary, textAlign: 'center', lineHeight: 20 }}>
@@ -237,7 +271,13 @@ export default function Matching() {
             <Card style={{ width: '100%' }}>
               <MatchRow label="Ride request sent" done />
               <MatchRow
-                label={phase === 'noDrivers' ? 'Waiting for a driver who can help to come online' : 'Waiting for a driver to accept…'}
+                label={
+                  phase === 'scheduled'
+                    ? `Matching starts about ${SCHEDULED_LEAD_MINUTES} minutes before pickup`
+                    : phase === 'noDrivers'
+                      ? 'Waiting for a driver who can help to come online'
+                      : 'Waiting for a driver to accept…'
+                }
                 done={false}
               />
             </Card>
@@ -249,16 +289,22 @@ export default function Matching() {
             <Card>
               <SectionLabel>Your options</SectionLabel>
               {error && <Hint>{error}</Hint>}
-              <PrimaryButton
-                label={checking ? 'Checking…' : 'Keep waiting'}
-                onPress={recheck}
-                disabled={checking}
-              />
-              <View style={{ flexDirection: 'row', gap: 12 }}>
-                <SecondaryButton label="Book for later" onPress={() => setDatePickerOpen(true)} />
-                <SecondaryButton label={cancelling ? 'Cancelling…' : 'Cancel request'} onPress={handleCancel} />
-              </View>
-              <Hint>Waiting changes nothing — your request stays exactly as it is.</Hint>
+              {phase === 'scheduled' ? (
+                <>
+                  <PrimaryButton label="Change the time" onPress={() => setDatePickerOpen(true)} />
+                  <SecondaryButton label={cancelling ? 'Cancelling…' : 'Cancel this ride'} onPress={handleCancel} />
+                  <Hint>Your ride is booked. You can change it or cancel any time before matching starts.</Hint>
+                </>
+              ) : (
+                <>
+                  <PrimaryButton label={checking ? 'Checking…' : 'Keep waiting'} onPress={recheck} disabled={checking} />
+                  <View style={{ flexDirection: 'row', gap: 12 }}>
+                    <SecondaryButton label="Book for later" onPress={() => setDatePickerOpen(true)} />
+                    <SecondaryButton label={cancelling ? 'Cancelling…' : 'Cancel request'} onPress={handleCancel} />
+                  </View>
+                  <Hint>Waiting changes nothing — your request stays exactly as it is.</Hint>
+                </>
+              )}
             </Card>
           )}
         </ScrollView>
