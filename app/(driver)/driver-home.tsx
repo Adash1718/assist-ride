@@ -9,6 +9,7 @@ import { useProfiles } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { initialsFrom } from '../../lib/format';
 import { ensureDriverProfileRow, fetchDriverProfile, isDriverProfileComplete, setDriverAvailability } from '../../lib/profileApi';
+import { DriverRating, fetchMyDriverRating } from '../../lib/feedbackApi';
 import { fetchActiveRideForDriver, fetchOldestOpenRequest, subscribeToIncomingRequests } from '../../lib/rideApi';
 
 // How often Driver Home re-checks for rides that became offerable without any
@@ -27,8 +28,19 @@ export default function DriverHome() {
   const [confirmedAvailable, setConfirmedAvailable] = useState(false);
   const latestToggle = useRef(false);
   const [checking, setChecking] = useState(true);
+  // This driver's own rating (0014). Only their aggregate is readable —
+  // individual ratings and comments would identify the rider who left them.
+  const [rating, setRating] = useState<DriverRating | null>(null);
 
   const userId = session?.user?.id;
+
+  useEffect(() => {
+    if (!userId) return;
+    (async () => {
+      const { data } = await fetchMyDriverRating();
+      if (data) setRating(data);
+    })();
+  }, [userId]);
 
   // Re-verify against the database on every visit here — not just trust
   // whatever ProfileContext happens to hold — so a driver can never reach
@@ -162,6 +174,11 @@ export default function DriverHome() {
             <View style={{ flex: 1, marginLeft: spacing.md }}>
               <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>{driver.fullName || 'Set up your profile'}</Text>
               <Hint>{driver.vehicle || 'No vehicle on file'}{driver.rampEquipped === 'Yes' ? ' · Wheelchair ramp van' : ''}</Hint>
+              <Hint>
+                {rating && rating.count > 0 && rating.overall !== null
+                  ? `★ ${rating.overall.toFixed(1)} from ${rating.count} ride${rating.count > 1 ? 's' : ''}`
+                  : 'No ratings yet'}
+              </Hint>
             </View>
             <IconButton onPress={() => router.push('/(driver)/driver-profile')}>
               <PencilIcon size={16} />

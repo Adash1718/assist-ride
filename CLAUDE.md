@@ -116,6 +116,11 @@ the app by phase/role rather than by feature:
   themselves (SPEC.md §3.C2 lists the hard rules vs the advisory ones).
   Ranking between eligible drivers doesn't exist yet — first come, first
   served.
+- `feedbackApi.ts` — post-ride feedback (0014): one immutable row per ride,
+  written by the requester only after the ride is `completed`. Drivers can't
+  read rows at all — `fetchMyDriverRating()` gives a driver their own
+  aggregate and nothing else. A duplicate submit surfaces as 23505, not a
+  silent overwrite.
 - `useLiveRide.ts` — one ride kept current from a fetch plus its Realtime
   subscription (used by `matching`, `en-route`, `active-ride`). Once a live
   event has arrived it wins over the fetch. Don't merge by "furthest
