@@ -1,14 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
-import { backOr } from '../../lib/nav';
 import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { backOr } from '../../lib/nav';
 import { colors, spacing, type } from '../../constants/theme';
-import { Avatar, Card, Chip, Hint, IconButton, Screen, SecondaryButton, TopBar } from '../../components/ui';
+import { Avatar, Card, Chip, Hint, IconButton, PrimaryButton, Screen, SecondaryButton, TopBar } from '../../components/ui';
 import { ClockIcon, MessageIcon, PhoneIcon } from '../../components/Icon';
 import { useProfiles } from '../../contexts/ProfileContext';
 import { initialsFrom } from '../../lib/format';
-import { cancelRideRequest, fetchMatchedDriver, MatchedDriverInfo, RideStatus } from '../../lib/rideApi';
+import {
+  cancelRideRequest,
+  CANCEL_GRACE_MINUTES,
+  fetchMatchedDriver,
+  fetchRideEvents,
+  formatFee,
+  LATE_CANCEL_FEE_CENTS,
+  MatchedDriverInfo,
+  RideStatus,
+} from '../../lib/rideApi';
 import { useLiveRide } from '../../lib/useLiveRide';
 
 // The rider's live view of a matched ride: follows the driver's progress
@@ -27,6 +36,7 @@ const STATUS_COPY: Partial<Record<RideStatus, { title: string; pill: string; ban
 // Long enough to read the "your driver had to cancel" message before going
 // back to the search, not so long it feels stuck.
 const DRIVER_CANCEL_NOTICE_MS = 4000;
+const TICK_MS = 15000;
 
 export default function DriverEnRoute() {
   const { rider } = useProfiles();
@@ -34,6 +44,9 @@ export default function DriverEnRoute() {
   const { ride, loading } = useLiveRide(rideId);
   const [driverInfo, setDriverInfo] = useState<MatchedDriverInfo | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [matchedAt, setMatchedAt] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now());
   const [error, setError] = useState<string | null>(null);
   const leaving = useRef(false);
 
@@ -48,6 +61,23 @@ export default function DriverEnRoute() {
     })();
   }, [matchedDriverId]);
 
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), TICK_MS);
+    return () => clearInterval(t);
+  }, []);
+
+  // When the grace window started: the moment a driver was first matched,
+  // from the ride's own event log (0009). The database decides the fee
+  // (0016) — this is only so the screen can say what's coming.
+  useEffect(() => {
+    if (!rideId) return;
+    (async () => {
+      const { data } = await fetchRideEvents(rideId);
+      const matched = data.find((e) => e.status === 'matched');
+      if (matched) setMatchedAt(new Date(matched.at).getTime());
+    })();
+  }, [rideId, matchedDriverId]);
+
   const status = ride?.status;
   useEffect(() => {
     if (leaving.current) return;
@@ -57,9 +87,12 @@ export default function DriverEnRoute() {
     } else if (status === 'completed') {
       leaving.current = true;
       router.replace({ pathname: '/(rider)/complete', params: { rideId } });
-    } else if (status === 'cancelled' || status === 'no_show') {
+    } else if (status === 'no_show') {
       leaving.current = true;
-      router.replace({ pathname: '/(rider)/home', params: { notice: 'cancelled' } });
+      router.replace({ pathname: '/(rider)/home', params: { notice: 'no_show', fee: String(ride?.feeCents ?? 0) } });
+    } else if (status === 'cancelled') {
+      leaving.current = true;
+      router.replace({ pathname: '/(rider)/home', params: { notice: 'cancelled', fee: String(ride?.feeCents ?? 0) } });
     } else if (status === 'requested') {
       // The driver handed the ride back before pickup (driver_cancel_ride) —
       // still booked, back in the search. Matching picks it back up.
@@ -72,19 +105,30 @@ export default function DriverEnRoute() {
     }
   }, [status, loading, ride]);
 
+  const graceEndsAt = matchedAt === null ? null : matchedAt + CANCEL_GRACE_MINUTES * 60000;
+  const graceMinutesLeft = graceEndsAt === null ? null : Math.max(0, Math.ceil((graceEndsAt - now) / 60000));
+  const feeWouldApply = graceEndsAt !== null && now > graceEndsAt;
+
   async function handleCancel() {
     if (!rideId) return;
+    // Past the grace window there's a real cost, so make it a deliberate
+    // second tap rather than something to fat-finger.
+    if (feeWouldApply && !confirmingCancel) {
+      setConfirmingCancel(true);
+      return;
+    }
     leaving.current = true; // our own cancel's Realtime echo mustn't navigate a second time
     setCancelling(true);
     setError(null);
-    const { error: err } = await cancelRideRequest(rideId);
+    const { data, error: err } = await cancelRideRequest(rideId);
     setCancelling(false);
     if (err) {
       leaving.current = false;
+      setConfirmingCancel(false);
       setError(err);
       return;
     }
-    router.replace({ pathname: '/(rider)/home', params: { notice: 'cancelled' } });
+    router.replace({ pathname: '/(rider)/home', params: { notice: 'cancelled', fee: String(data?.feeCents ?? 0) } });
   }
 
   const copy = (status && STATUS_COPY[status]) || STATUS_COPY.matched!;
@@ -229,10 +273,35 @@ export default function DriverEnRoute() {
         </ScrollView>
 
         {!riding && !driverCancelled && (
-          <View style={{ padding: spacing.lg, alignItems: 'center', gap: 8, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface }}>
+          <View style={{ padding: spacing.lg, gap: 8, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface }}>
             {error && <Hint>{error}</Hint>}
-            <SecondaryButton label={cancelling ? 'Cancelling…' : 'Cancel Ride'} onPress={handleCancel} />
-            <Text style={{ fontSize: 12, color: colors.textTertiary }}>Free to cancel for the next 12 min</Text>
+            {confirmingCancel ? (
+              <>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, textAlign: 'center' }}>
+                  Cancel and pay {formatFee(LATE_CANCEL_FEE_CENTS)}?
+                </Text>
+                <Hint>
+                  {driverFirstName} is already on the way, so the free window has passed. Cancelling now charges the standard fee.
+                </Hint>
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <SecondaryButton label="Keep my ride" onPress={() => setConfirmingCancel(false)} />
+                  <View style={{ flex: 1 }}>
+                    <PrimaryButton label={cancelling ? 'Cancelling…' : 'Cancel anyway'} onPress={handleCancel} disabled={cancelling} />
+                  </View>
+                </View>
+              </>
+            ) : (
+              <View style={{ alignItems: 'center', gap: 8 }}>
+                <SecondaryButton label={cancelling ? 'Cancelling…' : 'Cancel Ride'} onPress={handleCancel} />
+                <Text style={{ fontSize: 12, color: colors.textTertiary, textAlign: 'center' }}>
+                  {graceMinutesLeft === null
+                    ? 'Free to cancel for now'
+                    : graceMinutesLeft > 0
+                      ? `Free to cancel for the next ${graceMinutesLeft} min`
+                      : `Cancelling now costs ${formatFee(LATE_CANCEL_FEE_CENTS)}`}
+                </Text>
+              </View>
+            )}
           </View>
         )}
       </SafeAreaView>

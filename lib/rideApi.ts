@@ -82,6 +82,8 @@ export type RideRequestData = {
   matchedDriverId: string | null;
   pin: string | null;
   createdAt: string; // ISO — when the ride was booked (how long it's been searching)
+  feeCents: number; // 0 unless a late cancellation or no-show applied (0016)
+  feeReason: 'late_cancellation' | 'no_show' | null;
 };
 
 function mapRow(r: any): RideRequestData {
@@ -100,6 +102,8 @@ function mapRow(r: any): RideRequestData {
     matchedDriverId: r.matched_driver_id,
     pin: r.pin,
     createdAt: r.created_at,
+    feeCents: r.fee_cents ?? 0,
+    feeReason: r.fee_reason ?? null,
   };
 }
 
@@ -294,20 +298,44 @@ export async function fetchOldestOpenRequest(): Promise<{ data: RideRequestData 
   return { data: data ? mapRow(data) : null, error: null };
 }
 
-// Rider cancels. Only before pickup, and conditional on that, so a stale
-// screen can't cancel a ride that's already in progress or finished (e.g.
-// the driver completing it just as the rider taps Cancel) — confirmed by
-// getting the row back, since a zero-row UPDATE isn't an error.
-export async function cancelRideRequest(rideId: string): Promise<{ error: string | null }> {
-  const { data, error } = await supabase
-    .from('ride_requests')
-    .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-    .eq('id', rideId)
-    .in('status', ['requested', ...PRE_PICKUP_STATUSES])
-    .select('id');
-  if (error) return { error: error.message };
-  if (!data || data.length === 0) return { error: "This ride can't be cancelled any more — it has already started or ended." };
-  return { error: null };
+// The cancellation policy (SPEC.md §4), decided in migration 0016 — these
+// mirror the SQL constants purely so the app can say what the rules are.
+// The numbers that actually apply are the ones in the function.
+export const CANCEL_GRACE_MINUTES = 15;
+export const LATE_CANCEL_FEE_CENTS = 1200;
+export const NO_SHOW_WAIT_MINUTES = 10;
+export const NO_SHOW_FEE_CENTS = 1500;
+
+export function formatFee(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+export type FeeOutcome = { feeCents: number; feeReason: 'late_cancellation' | 'no_show' | null };
+
+// Rider cancels, through the database rather than a direct UPDATE: whether a
+// fee applies depends on how long ago a driver was matched, and that's not a
+// decision to leave to the client. Free while still searching or inside the
+// grace window; a flat fee after it. Nothing charges anyone — no payments
+// exist in this app — the fee is recorded on the ride.
+export async function cancelRideRequest(rideId: string): Promise<{ data: FeeOutcome | null; error: string | null }> {
+  const { data, error } = await supabase.rpc('rider_cancel_ride', { p_ride_id: rideId });
+  if (error?.code === '55000') return { data: null, error: "This ride can't be cancelled any more — it has already started or ended." };
+  if (error?.code === '42501') return { data: null, error: 'This is no longer your ride to cancel.' };
+  if (error) return { data: null, error: error.message };
+  const row = (data ?? {}) as any;
+  return { data: { feeCents: Number(row.fee_cents ?? 0), feeReason: row.fee_reason ?? null }, error: null };
+}
+
+// The driver waited at pickup and nobody came. Only from 'arrived', only
+// after the real wait, and only by the driver on the ride — all checked in
+// the database (0016), not here.
+export async function markNoShow(rideId: string): Promise<{ data: FeeOutcome | null; error: string | null }> {
+  const { data, error } = await supabase.rpc('mark_no_show', { p_ride_id: rideId });
+  if (error?.code === '55000') return { data: null, error: error.message.replace(/^.*?:\s*/, '') };
+  if (error?.code === '42501') return { data: null, error: "You're no longer the driver on this ride." };
+  if (error) return { data: null, error: error.message };
+  const row = (data ?? {}) as any;
+  return { data: { feeCents: Number(row.fee_cents ?? 0), feeReason: row.fee_reason ?? null }, error: null };
 }
 
 // One entry in a ride's status history, written by migration 0009's trigger

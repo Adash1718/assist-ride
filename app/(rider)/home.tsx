@@ -9,12 +9,15 @@ import { useProfiles } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { initialsFrom } from '../../lib/format';
 import { ensureRiderProfileRow, fetchRiderProfile, isRiderProfileComplete } from '../../lib/profileApi';
-import { ACTIVE_RIDE_STATUSES, fetchActiveRideForRider } from '../../lib/rideApi';
+import { ACTIVE_RIDE_STATUSES, fetchActiveRideForRider, formatFee } from '../../lib/rideApi';
 
 export default function RiderHome() {
   const { rider, setRider } = useProfiles();
   const { session, loading, signOut } = useAuth();
-  const { notice } = useLocalSearchParams<{ notice?: string }>();
+  // `fee` comes from the screen that ended the ride (0016 decides the amount
+  // server-side); 0 or absent means no fee applied.
+  const { notice, fee } = useLocalSearchParams<{ notice?: string; fee?: string }>();
+  const feeCents = Number(fee ?? 0) || 0;
   const [checking, setChecking] = useState(true);
   const [checkingRide, setCheckingRide] = useState(true);
 
@@ -107,7 +110,20 @@ export default function RiderHome() {
           {notice === 'cancelled' && (
             <Card style={{ backgroundColor: colors.positiveSoft, borderColor: colors.positive }}>
               <Text style={{ fontSize: 15, fontWeight: '700', color: colors.positiveDark }}>Your ride was cancelled</Text>
-              <Hint>Book a new ride whenever you're ready.</Hint>
+              <Hint>
+                {feeCents > 0
+                  ? `A ${formatFee(feeCents)} late-cancellation fee applies — the driver was already on their way. Book a new ride whenever you're ready.`
+                  : 'No cancellation fee. Book a new ride whenever you\'re ready.'}
+              </Hint>
+            </Card>
+          )}
+          {notice === 'no_show' && (
+            <Card style={{ backgroundColor: colors.alertSoft, borderColor: colors.alert }}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: colors.alertDark }}>Your driver couldn't find you</Text>
+              <Hint>
+                They waited at the pickup point and marked the ride as a no-show
+                {feeCents > 0 ? `, so a ${formatFee(feeCents)} fee applies` : ''}. If something went wrong, contact support.
+              </Hint>
             </Card>
           )}
 

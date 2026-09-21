@@ -6,7 +6,17 @@ import { colors, spacing } from '../../constants/theme';
 import { Card, Hint, PrimaryButton, Screen, SecondaryButton, SectionLabel } from '../../components/ui';
 import { CheckIcon, ClockIcon } from '../../components/Icon';
 import { RecognizeRiderCard, RiderNeedsCard, TripCard } from '../../components/RideCards';
-import { advanceRideStatus, driverCancelRide, PRE_PICKUP_STATUSES, RideStatus } from '../../lib/rideApi';
+import {
+  advanceRideStatus,
+  driverCancelRide,
+  fetchRideEvents,
+  formatFee,
+  markNoShow,
+  NO_SHOW_FEE_CENTS,
+  NO_SHOW_WAIT_MINUTES,
+  PRE_PICKUP_STATUSES,
+  RideStatus,
+} from '../../lib/rideApi';
 import { useLiveRide } from '../../lib/useLiveRide';
 
 // The driver's side of a matched ride (SPEC.md §3.D–G): drive to pickup →
@@ -14,7 +24,8 @@ import { useLiveRide } from '../../lib/useLiveRide';
 // driver here whenever they have an active ride and offers them no new
 // requests until it ends, so this is where every matched driver lands.
 // Before pickup the driver can also hand the ride back (driverCancelRide) —
-// it goes back into the search for another driver rather than ending.
+// it goes back into the search for another driver rather than ending — and
+// at pickup, after a real wait, mark a no-show (0016).
 
 type Step = { status: RideStatus; label: string; action: string; next: RideStatus };
 
@@ -24,6 +35,8 @@ const STEPS: Step[] = [
   { status: 'arrived', label: 'At pickup — confirm PIN', action: 'Confirm PIN & start ride', next: 'in_progress' },
   { status: 'in_progress', label: 'Ride in progress', action: 'Complete ride', next: 'completed' },
 ];
+
+const TICK_MS = 15000;
 
 function backToDriverHome() {
   router.dismissTo('/(driver)/driver-home');
@@ -36,11 +49,19 @@ export default function ActiveRide() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [confirmingNoShow, setConfirmingNoShow] = useState(false);
+  const [arrivedAt, setArrivedAt] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now());
 
   // Not visible to this driver (any more) — nothing to show here.
   useEffect(() => {
     if (!loading && !ride) backToDriverHome();
   }, [loading, ride]);
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), TICK_MS);
+    return () => clearInterval(t);
+  }, []);
 
   // The rider cancelled (pushed live — the row stays visible to the matched
   // driver, so Realtime delivers it).
@@ -51,9 +72,25 @@ export default function ActiveRide() {
     return () => clearTimeout(t);
   }, [cancelled]);
 
+  // When this driver actually arrived, from the ride's event log (0009) —
+  // the database uses the same timestamp to decide whether a no-show may be
+  // marked yet (0016); this is so the screen can show the wait counting down.
+  const status = ride?.status;
+  useEffect(() => {
+    if (!rideId || status !== 'arrived') return;
+    (async () => {
+      const { data } = await fetchRideEvents(rideId);
+      const arrived = [...data].reverse().find((e) => e.status === 'arrived');
+      if (arrived) setArrivedAt(new Date(arrived.at).getTime());
+    })();
+  }, [rideId, status]);
+
   const currentIndex = STEPS.findIndex((s) => s.status === ride?.status);
   const step = currentIndex >= 0 ? STEPS[currentIndex] : null;
   const canHandBack = !!ride && PRE_PICKUP_STATUSES.includes(ride.status);
+  const noShowAllowedAt = arrivedAt === null ? null : arrivedAt + NO_SHOW_WAIT_MINUTES * 60000;
+  const noShowMinutesLeft = noShowAllowedAt === null ? null : Math.max(0, Math.ceil((noShowAllowedAt - now) / 60000));
+  const canMarkNoShow = status === 'arrived' && noShowMinutesLeft === 0;
 
   async function advance() {
     if (!ride || !step) return;
@@ -90,6 +127,20 @@ export default function ActiveRide() {
     setBusy(false);
     if (err) {
       setConfirmingCancel(false);
+      setError(err);
+      return;
+    }
+    backToDriverHome();
+  }
+
+  async function handleNoShow() {
+    if (!ride) return;
+    setBusy(true);
+    setError(null);
+    const { error: err } = await markNoShow(ride.id);
+    setBusy(false);
+    if (err) {
+      setConfirmingNoShow(false);
       setError(err);
       return;
     }
@@ -171,6 +222,20 @@ export default function ActiveRide() {
                   </View>
                 </View>
               </>
+            ) : confirmingNoShow ? (
+              <>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>Mark this as a no-show?</Text>
+                <Hint>
+                  You've waited {NO_SHOW_WAIT_MINUTES} minutes at pickup. This ends the ride and charges the rider the{' '}
+                  {formatFee(NO_SHOW_FEE_CENTS)} no-show fee — please check for them once more first.
+                </Hint>
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <SecondaryButton label="Keep waiting" onPress={() => setConfirmingNoShow(false)} />
+                  <View style={{ flex: 1 }}>
+                    <PrimaryButton label={busy ? 'Ending…' : 'Yes, no-show'} onPress={handleNoShow} disabled={busy} />
+                  </View>
+                </View>
+              </>
             ) : (
               <>
                 {step.status === 'arrived' && (
@@ -199,6 +264,21 @@ export default function ActiveRide() {
                   onPress={advance}
                   disabled={busy || (step.status === 'arrived' && pinEntry.length !== 4)}
                 />
+                {step.status === 'arrived' && (
+                  <Pressable
+                    onPress={() => canMarkNoShow && setConfirmingNoShow(true)}
+                    disabled={!canMarkNoShow}
+                    style={{ alignSelf: 'center', padding: 6 }}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: canMarkNoShow ? colors.alertDark : colors.textTertiary }}>
+                      {canMarkNoShow
+                        ? "Rider didn't show"
+                        : noShowMinutesLeft === null
+                          ? `Wait ${NO_SHOW_WAIT_MINUTES} min before reporting a no-show`
+                          : `No-show can be reported in ${noShowMinutesLeft} min`}
+                    </Text>
+                  </Pressable>
+                )}
                 {canHandBack && (
                   <Pressable onPress={() => setConfirmingCancel(true)} style={{ alignSelf: 'center', padding: 6 }}>
                     <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary }}>Can't make it? Cancel ride</Text>

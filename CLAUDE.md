@@ -116,6 +116,13 @@ the app by phase/role rather than by feature:
   themselves (SPEC.md §3.C2 lists the hard rules vs the advisory ones).
   Ranking between eligible drivers doesn't exist yet — first come, first
   served.
+- Money-ish decisions are made in the database, never in a screen: the
+  rider's cancel goes through `rider_cancel_ride` (0016), which decides from
+  the `ride_events` log whether the 15-minute grace window has passed, and
+  `mark_no_show` enforces "matched driver, at pickup, waited 10 minutes".
+  Clients only mirror the constants (`CANCEL_GRACE_MINUTES` and friends in
+  `rideApi.ts`) for wording. Nothing charges anyone — the fee is recorded on
+  the ride.
 - `feedbackApi.ts` — post-ride feedback (0014): one immutable row per ride,
   written by the requester only after the ride is `completed`. Drivers can't
   read rows at all — `fetchMyDriverRating()` gives a driver their own

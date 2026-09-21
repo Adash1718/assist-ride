@@ -109,8 +109,11 @@ export default function Matching() {
       leaving.current = true;
       router.replace({ pathname: '/(rider)/complete', params: { rideId } });
     } else if (status === 'cancelled' || status === 'no_show') {
+      // A searching ride is always free to cancel (0016), so no fee to pass.
+      // no_show can't happen from here — it needs a driver at pickup — but
+      // don't call it a cancellation if that ever changes.
       leaving.current = true;
-      router.replace({ pathname: '/(rider)/home', params: { notice: 'cancelled' } });
+      router.replace({ pathname: '/(rider)/home', params: { notice: status === 'no_show' ? 'no_show' : 'cancelled' } });
     }
   }, [status]);
 
