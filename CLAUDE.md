@@ -165,6 +165,13 @@ trail — 0002 → 0006 fixed each other's bugs, worth reading in order; note
 - An `UPDATE` that matches zero rows (lost race, RLS-filtered) is **not** an
   error from PostgREST — chain `.select()` and check the returned rows when
   success matters (see `acceptRideRequest`).
+- Which open rides a driver sees is decided entirely by that one SELECT
+  policy, now four conditions deep: available (0002), not declined (0004),
+  can actually serve it (`driver_can_serve`, 0010), inside a scheduled
+  ride's lead window (0013), and ranked highly enough for the ride's age
+  (`driver_offer_rank` <= 1 + floor(age/45s), 0015). Two of those turn on
+  the clock rather than a row change, so Realtime can't announce them —
+  that's why Driver Home re-runs its catch-up query every 20s.
 - `ride_events` (0009) is the status history, written **only** by the
   `log_ride_event` trigger: it has no client INSERT/UPDATE/DELETE policies,
   so the log can't be forged or rewritten. Reads are limited to the ride's

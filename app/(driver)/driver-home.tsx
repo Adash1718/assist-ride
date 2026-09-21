@@ -13,8 +13,10 @@ import { DriverRating, fetchMyDriverRating } from '../../lib/feedbackApi';
 import { fetchActiveRideForDriver, fetchOldestOpenRequest, subscribeToIncomingRequests } from '../../lib/rideApi';
 
 // How often Driver Home re-checks for rides that became offerable without any
-// row changing — i.e. scheduled rides reaching their lead window (0013).
-const MATURING_RIDE_CHECK_MS = 60000;
+// row changing: scheduled rides reaching their lead window (0013), and rides
+// widening past the better-matched driver who was offered them first (0015).
+// Both are the clock passing, so Realtime has nothing to publish.
+const MATURING_RIDE_CHECK_MS = 20000;
 
 export default function DriverHome() {
   const { driver, setDriver } = useProfiles();
