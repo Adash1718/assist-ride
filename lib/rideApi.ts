@@ -223,11 +223,14 @@ export async function rescheduleRideRequest(rideId: string, whenISO: string): Pr
 }
 
 // The rider's ride that's still going, if any (see OPEN_RIDE_STATUSES).
+// Either one they booked themselves or one a proxy booked for them (0017) —
+// otherwise a rider whose helper booked would be shown "Book a Ride" and
+// could end up with two.
 export async function fetchActiveRideForRider(riderUserId: string): Promise<{ data: RideRequestData | null; error: string | null }> {
   const { data, error } = await supabase
     .from('ride_requests')
     .select('*')
-    .eq('requested_by', riderUserId)
+    .or(`requested_by.eq.${riderUserId},rider_id.eq.${riderUserId}`)
     .in('status', OPEN_RIDE_STATUSES)
     .order('created_at', { ascending: false })
     .limit(1)

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { router } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { router, useLocalSearchParams } from 'expo-router';
 import { backOr } from '../../lib/nav';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,8 +18,9 @@ import {
   TopBar,
 } from '../../components/ui';
 import { CalendarIcon, ClockIcon, MapPinIcon } from '../../components/Icon';
-import { useProfiles } from '../../contexts/ProfileContext';
+import { RiderProfileData, useProfiles } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { fetchRiderProfile } from '../../lib/profileApi';
 import { initialsFrom } from '../../lib/format';
 import { formatDateLong, parseTimeLabel } from '../../lib/dateTime';
 import { DatePickerModal } from '../../components/DatePickerModal';
@@ -29,6 +30,11 @@ import { buildNeedsSnapshot, createRideRequest } from '../../lib/rideApi';
 export default function BookRide() {
   const { rider } = useProfiles();
   const { user } = useAuth();
+  // Booking for someone else (0017): a proxy arrives here with the rider's
+  // id. Their profile is read from the database — ProfileContext only ever
+  // holds the signed-in person's own details.
+  const { forRiderId } = useLocalSearchParams<{ forRiderId?: string }>();
+  const [forRider, setForRider] = useState<RiderProfileData | null>(null);
   const [rideMode, setRideMode] = useState('Now');
   const [pickup, setPickup] = useState('123 Maple Street');
   const [dropoff, setDropoff] = useState('Riverside Medical Center');
@@ -44,12 +50,26 @@ export default function BookRide() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const riderName = rider.fullName.trim() || 'this rider';
-  const needChips = [rider.mobilityAid !== 'None' ? rider.mobilityAid : null, ...rider.communicationNeeds, ...rider.assistanceNeeds]
+  useEffect(() => {
+    if (!forRiderId) return;
+    (async () => {
+      const { data } = await fetchRiderProfile(forRiderId);
+      setForRider(data);
+    })();
+  }, [forRiderId]);
+
+  // Whose ride this is: the signed-in rider, or the person they act for.
+  const subject = forRider ?? rider;
+  const bookingForSomeoneElse = !!forRiderId;
+  const riderName = subject.fullName.trim() || 'this rider';
+  const needChips = [subject.mobilityAid !== 'None' ? subject.mobilityAid : null, ...subject.communicationNeeds, ...subject.assistanceNeeds]
     .filter((c): c is string => !!c)
     .slice(0, 3);
 
-  const canSubmit = rideMode === 'Now' || (scheduledDate !== null && scheduledTime !== '');
+  // Don't let a proxy submit before the rider's needs have loaded — the
+  // snapshot on the ride is what every driver is matched against.
+  const canSubmit =
+    (rideMode === 'Now' || (scheduledDate !== null && scheduledTime !== '')) && (!bookingForSomeoneElse || forRider !== null);
 
   async function handleSubmit() {
     if (!user) return;
@@ -64,14 +84,14 @@ export default function BookRide() {
 
     const { data, error } = await createRideRequest({
       requestedBy: user.id,
-      riderId: user.id,
+      riderId: forRiderId ?? user.id,
       companionCount: companions,
       pickup,
       dropoff,
       rideMode: rideMode === 'Now' ? 'on_demand' : 'scheduled',
       requestedTime: requestedTime.toISOString(),
       rideNotes: notes,
-      needsSnapshot: buildNeedsSnapshot(rider),
+      needsSnapshot: buildNeedsSnapshot(subject),
     });
 
     setSubmitting(false);
@@ -85,15 +105,18 @@ export default function BookRide() {
   return (
     <Screen>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-        <TopBar title="Book a Ride" onBack={() => backOr('/(rider)/home')} right={<Avatar initials={initialsFrom(rider.fullName)} size={40} />} />
+        <TopBar title="Book a Ride" onBack={() => backOr('/(rider)/home')} right={<Avatar initials={initialsFrom(subject.fullName)} size={40} />} />
 
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
           <Card>
             <SectionLabel>Booking for</SectionLabel>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
-              <Avatar initials={initialsFrom(rider.fullName)} size={48} />
+              <Avatar initials={initialsFrom(subject.fullName)} size={48} />
               <View style={{ flex: 1, gap: 6 }}>
-                <Text style={{ fontWeight: '700', fontSize: 16, color: colors.text }}>{rider.fullName || 'No profile yet'}</Text>
+                <Text style={{ fontWeight: '700', fontSize: 16, color: colors.text }}>
+                  {subject.fullName || (bookingForSomeoneElse ? 'Loading their details…' : 'No profile yet')}
+                </Text>
+                {bookingForSomeoneElse && <Hint>You're booking as their helper — they'll see this ride in their app too.</Hint>}
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                   {needChips.length > 0 ? (
                     needChips.map((c) => <Chip key={c} label={c} />)

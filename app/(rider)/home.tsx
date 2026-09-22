@@ -3,13 +3,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, type } from '../../constants/theme';
-import { Avatar, Card, Chip, Hint, IconButton, PrimaryButton, Screen, TopBar } from '../../components/ui';
+import { Avatar, Card, Chip, Hint, IconButton, PrimaryButton, Screen, SecondaryButton, TopBar } from '../../components/ui';
 import { LogOutIcon, PencilIcon } from '../../components/Icon';
 import { useProfiles } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { initialsFrom } from '../../lib/format';
 import { ensureRiderProfileRow, fetchRiderProfile, isRiderProfileComplete } from '../../lib/profileApi';
 import { ACTIVE_RIDE_STATUSES, fetchActiveRideForRider, formatFee } from '../../lib/rideApi';
+import { fetchLinksForMe, ProxyLink } from '../../lib/proxyApi';
 
 export default function RiderHome() {
   const { rider, setRider } = useProfiles();
@@ -20,6 +21,9 @@ export default function RiderHome() {
   const feeCents = Number(fee ?? 0) || 0;
   const [checking, setChecking] = useState(true);
   const [checkingRide, setCheckingRide] = useState(true);
+  // Proxy links in both directions (0017): invitations waiting for this
+  // person, and riders they already book for.
+  const [links, setLinks] = useState<ProxyLink[]>([]);
 
   const userId = session?.user?.id;
 
@@ -83,6 +87,18 @@ export default function RiderHome() {
     }, [checking, userId])
   );
 
+  useEffect(() => {
+    if (!userId) return;
+    (async () => {
+      const { data } = await fetchLinksForMe();
+      setLinks(data.filter((l) => l.riderId !== userId));
+    })();
+  }, [userId]);
+
+  const myEmail = (session?.user?.email ?? '').toLowerCase();
+  const pendingInvites = links.filter((l) => l.status === 'pending' && l.proxyEmail.toLowerCase() === myEmail).length;
+  const ridersIActFor = links.filter((l) => l.status === 'accepted' && l.proxyId === userId).length;
+
   const needChips = [rider.mobilityAid !== 'None' ? rider.mobilityAid : null, ...rider.communicationNeeds, ...rider.assistanceNeeds]
     .filter((c): c is string => !!c)
     .slice(0, 3);
@@ -143,6 +159,28 @@ export default function RiderHome() {
               <PencilIcon size={16} />
             </IconButton>
           </Card>
+
+          {pendingInvites > 0 ? (
+            <Card style={{ backgroundColor: colors.accentSoft, borderColor: colors.accent }}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: colors.accentDark }}>
+                {pendingInvites === 1 ? 'Someone asked you to book their rides' : `${pendingInvites} people asked you to book their rides`}
+              </Text>
+              <Hint>Accepting lets you book and follow rides for them. You can step back out any time.</Hint>
+              <SecondaryButton label="See the invitation" onPress={() => router.push('/(rider)/people')} />
+            </Card>
+          ) : (
+            <Card style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>People</Text>
+                <Hint>
+                  {ridersIActFor > 0
+                    ? `You book for ${ridersIActFor} ${ridersIActFor === 1 ? 'person' : 'people'} · choose who can book for you`
+                    : 'Let a caregiver or family member book and follow rides for you'}
+                </Hint>
+              </View>
+              <SecondaryButton label="Manage" onPress={() => router.push('/(rider)/people')} />
+            </Card>
+          )}
 
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm }}>
             <Text style={[type.heading, { color: colors.text }]}>No ride booked yet</Text>

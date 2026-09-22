@@ -125,6 +125,12 @@ the app by phase/role rather than by feature:
   Clients only mirror the constants (`CANCEL_GRACE_MINUTES` and friends in
   `rideApi.ts`) for wording. Nothing charges anyone — the fee is recorded on
   the ride.
+- `proxyApi.ts` — proxy links (0017): who may book for a rider, and who a
+  rider books for. Two directions of the same table; RLS decides which rows
+  come back, so `fetchLinksForMe()` is the same query either way. A ride
+  booked by a proxy has `requested_by` = the proxy and `rider_id` = the
+  rider, and **both** can see and cancel it — anything that scopes rides to
+  one person needs both columns (`fetchActiveRideForRider` does).
 - `feedbackApi.ts` — post-ride feedback (0014): one immutable row per ride,
   written by the requester only after the ride is `completed`. Drivers can't
   read rows at all — `fetchMyDriverRating()` gives a driver their own

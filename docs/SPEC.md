@@ -51,6 +51,24 @@ The app moved from an in-memory UI prototype to real auth + persistence:
   book on behalf of a rider who won't use the app themselves. Self-service
   (the rider books their own ride) is also in scope, using the same booking
   flow — a request is just made *by* a rider account instead of *for* one.
+  - **Built in round 17** (`0017_proxy_accounts.sql`). The rider invites by
+    **email** and the invitee accepts, which stamps their user id on the
+    link; the rider can revoke any time. Storing the invited address rather
+    than resolving it to an account means this can't be used to find out
+    which emails have accounts here.
+  - A proxy may **book, track and cancel** for a linked rider, and **read**
+    that rider's profile (the booking screen and `needs_snapshot` depend on
+    it). A proxy may **not** edit the profile or see emergency/medical
+    contacts — revisit the contacts if there's a real reason.
+  - Two things this exposed, both fixed in the same migration: a rider
+    **could not see a ride booked for them** (every policy keyed off
+    `requested_by`, which is the proxy on a proxy booking), and **any
+    signed-in user could insert a ride naming an arbitrary `rider_id`** with
+    that person's needs attached. Booking for someone else now requires an
+    accepted link, and riders see and can cancel rides where they are the
+    `rider_id`.
+  - Per §2.1 one account can hold several roles, so the same person can be a
+    rider, a driver and someone's proxy.
 - **Exactly one assistance-needing rider per ride.** No multi-disabled-rider
   bin-packing for now — this drastically simplifies driver capacity and
   matching. Revisit later if there's demand.
@@ -82,7 +100,7 @@ the rider themselves or by a proxy on their behalf.
 | Field | Notes |
 |---|---|
 | `rider_id` | |
-| `linked_proxy_ids[]` | proxies allowed to book/view for this rider |
+| `linked_proxy_ids[]` | proxies allowed to book/view for this rider — **implemented in round 17 as the `rider_proxies` table** (invite by email, accepted by the invitee, revocable), not an array on the profile, so an invite can be pending and a link can be revoked without losing the record |
 | `mobility_aid` | none / cane / walker / manual wheelchair / power wheelchair / other **[ASSUMED enum — confirm list]** |
 | `wheelchair_foldable` | bool, only relevant if wheelchair — determines if a regular trunk works or a ramp/lift vehicle is required |
 | `communication_needs` | tags: hearing-impaired, vision-impaired, cognitive support, non-native-language, other-freeform |
