@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing } from '../../constants/theme';
 import { Card, Divider, Hint, PrimaryButton, Screen, SectionLabel } from '../../components/ui';
 import { CheckIcon, StarIcon } from '../../components/Icon';
+import { EmergencyAccessNotice } from '../../components/RideCards';
 import { useProfiles } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchRideRequest, RideRequestData } from '../../lib/rideApi';
@@ -118,11 +119,16 @@ export default function RideComplete() {
             </Hint>
           </View>
 
+          {rideId && <EmergencyAccessNotice rideId={rideId} />}
+
           <Card>
             <TripRow k="Pickup" v={ride?.pickup ?? '—'} />
             <TripRow k="Dropoff" v={ride?.dropoff ?? '—'} />
             <Divider />
-            <TripRow k="Fare" v="$19.50" />
+            {/* SPEC.md §4: pricing isn't worked out, so v1 shows a flat
+                placeholder. Labelled as one rather than presented as a real
+                charge — nothing bills anyone. */}
+            <TripRow k="Fare (flat placeholder)" v="$19.50" />
           </Card>
 
           {existing ? (

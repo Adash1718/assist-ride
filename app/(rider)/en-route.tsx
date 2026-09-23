@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { backOr } from '../../lib/nav';
 import { colors, spacing, type } from '../../constants/theme';
 import { Avatar, Card, Chip, Hint, IconButton, PrimaryButton, Screen, SecondaryButton, TopBar } from '../../components/ui';
-import { ClockIcon, MessageIcon, PhoneIcon } from '../../components/Icon';
+import { ClockIcon } from '../../components/Icon';
+import { EmergencyAccessNotice } from '../../components/RideCards';
 import { useProfiles } from '../../contexts/ProfileContext';
 import { initialsFrom } from '../../lib/format';
 import {
@@ -13,6 +13,7 @@ import {
   CANCEL_GRACE_MINUTES,
   fetchMatchedDriver,
   fetchRideEvents,
+  fetchRidePin,
   formatFee,
   LATE_CANCEL_FEE_CENTS,
   MatchedDriverInfo,
@@ -43,6 +44,7 @@ export default function DriverEnRoute() {
   const { rideId } = useLocalSearchParams<{ rideId: string }>();
   const { ride, loading } = useLiveRide(rideId);
   const [driverInfo, setDriverInfo] = useState<MatchedDriverInfo | null>(null);
+  const [pin, setPin] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [matchedAt, setMatchedAt] = useState<number | null>(null);
@@ -54,12 +56,22 @@ export default function DriverEnRoute() {
   // say who cancelled; replaced when a new driver is matched.
   const matchedDriverId = ride?.matchedDriverId;
   useEffect(() => {
-    if (!matchedDriverId) return;
+    if (!matchedDriverId || !rideId) return;
     (async () => {
-      const { data } = await fetchMatchedDriver(matchedDriverId);
+      const { data } = await fetchMatchedDriver(rideId);
       if (data) setDriverInfo(data);
     })();
-  }, [matchedDriverId]);
+  }, [matchedDriverId, rideId]);
+
+  // The pin lives in its own table now (0018) — this side can read it, the
+  // driver's side can't.
+  useEffect(() => {
+    if (!rideId) return;
+    (async () => {
+      const { data } = await fetchRidePin(rideId);
+      if (data) setPin(data);
+    })();
+  }, [rideId]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), TICK_MS);
@@ -107,13 +119,16 @@ export default function DriverEnRoute() {
 
   const graceEndsAt = matchedAt === null ? null : matchedAt + CANCEL_GRACE_MINUTES * 60000;
   const graceMinutesLeft = graceEndsAt === null ? null : Math.max(0, Math.ceil((graceEndsAt - now) / 60000));
-  const feeWouldApply = graceEndsAt !== null && now > graceEndsAt;
-
   async function handleCancel() {
     if (!rideId) return;
-    // Past the grace window there's a real cost, so make it a deliberate
-    // second tap rather than something to fat-finger.
-    if (feeWouldApply && !confirmingCancel) {
+    // Past the grace window — or whenever we can't prove we're inside it —
+    // there's a real cost, so make it a deliberate second tap rather than
+    // something to fat-finger. `now` is read fresh here rather than from
+    // state: a throttled background tab can leave that state minutes behind,
+    // which used to skip this confirmation entirely and cancel on one tap
+    // while the server charged the late fee.
+    const proveFree = graceEndsAt !== null && Date.now() <= graceEndsAt;
+    if (!proveFree && !confirmingCancel) {
       setConfirmingCancel(true);
       return;
     }
@@ -142,7 +157,7 @@ export default function DriverEnRoute() {
   const driverTags = driverInfo?.capabilityTags ?? [];
   const riderFirst = rider.fullName.trim().split(' ')[0];
   const riderFirstName = riderFirst || 'the rider';
-  const pinDigits = (ride?.pin ?? '----').split('');
+  const pinDigits = (pin ?? '----').split('');
 
   if (loading || !ride) return null;
 
@@ -151,7 +166,10 @@ export default function DriverEnRoute() {
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
         <TopBar
           title={copy.title}
-          onBack={() => backOr('/(rider)/home')}
+          // Deliberately not backOr(): plain history could land on Home
+          // without `stay`, whose focus effect would bounce straight back
+          // here. The ride keeps running either way.
+          onBack={() => router.replace({ pathname: '/(rider)/home', params: { stay: '1' } })}
           right={
             <View
               style={{
@@ -167,6 +185,7 @@ export default function DriverEnRoute() {
         />
 
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
+          {rideId && <EmergencyAccessNotice rideId={rideId} />}
           {driverCancelled && (
             <Card style={{ backgroundColor: colors.alertSoft, borderColor: colors.alert }}>
               <Text style={{ fontSize: 16, fontWeight: '700', color: colors.alertDark }}>{driverFirstName} had to cancel</Text>
@@ -213,12 +232,10 @@ export default function DriverEnRoute() {
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontWeight: '700', fontSize: 16, color: colors.text }}>{driverName}</Text>
                 </View>
-                <IconButton>
-                  <PhoneIcon size={18} />
-                </IconButton>
-                <IconButton>
-                  <MessageIcon size={18} />
-                </IconButton>
+                {/* The call and message buttons that used to sit here did
+                    nothing at all. Contacting a driver needs number masking
+                    (nobody's personal number should be handed out), so it's
+                    a real feature, not an icon. */}
               </View>
               <Hint>{vehicleLine}</Hint>
               {driverTags.length > 0 && (
@@ -278,10 +295,17 @@ export default function DriverEnRoute() {
             {confirmingCancel ? (
               <>
                 <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, textAlign: 'center' }}>
-                  Cancel and pay {formatFee(LATE_CANCEL_FEE_CENTS)}?
+                  {graceEndsAt === null
+                    ? `Cancel and pay up to ${formatFee(LATE_CANCEL_FEE_CENTS)}?`
+                    : `Cancel and pay ${formatFee(LATE_CANCEL_FEE_CENTS)}?`}
                 </Text>
+                {/* Only claim the window has passed when we actually know it
+                    has. If the match time never loaded, say so instead of
+                    inventing a certainty the screen doesn't have. */}
                 <Hint>
-                  {driverFirstName} is already on the way, so the free window has passed. Cancelling now charges the standard fee.
+                  {graceEndsAt === null
+                    ? `We couldn't check how long ${driverFirstName} has been on the way. If the free window has passed, this charges the standard fee — you'll see the exact amount straight after.`
+                    : `${driverFirstName} is already on the way, so the free window has passed. Cancelling now charges the standard fee.`}
                 </Hint>
                 <View style={{ flexDirection: 'row', gap: 12 }}>
                   <SecondaryButton label="Keep my ride" onPress={() => setConfirmingCancel(false)} />
@@ -295,7 +319,7 @@ export default function DriverEnRoute() {
                 <SecondaryButton label={cancelling ? 'Cancelling…' : 'Cancel Ride'} onPress={handleCancel} />
                 <Text style={{ fontSize: 12, color: colors.textTertiary, textAlign: 'center' }}>
                   {graceMinutesLeft === null
-                    ? 'Free to cancel for now'
+                    ? `Cancelling may cost ${formatFee(LATE_CANCEL_FEE_CENTS)} — we'll confirm before charging`
                     : graceMinutesLeft > 0
                       ? `Free to cancel for the next ${graceMinutesLeft} min`
                       : `Cancelling now costs ${formatFee(LATE_CANCEL_FEE_CENTS)}`}

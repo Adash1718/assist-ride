@@ -17,10 +17,14 @@ export default function RiderHome() {
   const { session, loading, signOut } = useAuth();
   // `fee` comes from the screen that ended the ride (0016 decides the amount
   // server-side); 0 or absent means no fee applied.
-  const { notice, fee } = useLocalSearchParams<{ notice?: string; fee?: string }>();
+  // `fee` comes from the screen that ended the ride; `stay` means the rider
+  // deliberately backed out of their active ride to use Home, so the resume
+  // redirect below must not drag them straight back in.
+  const { notice, fee, stay } = useLocalSearchParams<{ notice?: string; fee?: string; stay?: string }>();
   const feeCents = Number(fee ?? 0) || 0;
   const [checking, setChecking] = useState(true);
   const [checkingRide, setCheckingRide] = useState(true);
+  const [ongoingRide, setOngoingRide] = useState<{ id: string; active: boolean } | null>(null);
   // Proxy links in both directions (0017): invitations waiting for this
   // person, and riders they already book for.
   const [links, setLinks] = useState<ProxyLink[]>([]);
@@ -71,6 +75,16 @@ export default function RiderHome() {
       (async () => {
         const { data } = await fetchActiveRideForRider(userId);
         if (cancelled) return;
+        // `stay` means they got here ON PURPOSE — from the back arrow on their
+        // own ride — so send them nowhere. Redirecting on every focus made the
+        // ride screen a dead end: Home was the only route to sign-out and the
+        // profile, and it bounced straight back, so cancelling the ride (and
+        // eating the late fee) was the only way out.
+        if (data && stay === '1') {
+          setOngoingRide({ id: data.id, active: ACTIVE_RIDE_STATUSES.includes(data.status) });
+          setCheckingRide(false);
+          return;
+        }
         if (data && ACTIVE_RIDE_STATUSES.includes(data.status)) {
           router.replace({ pathname: '/(rider)/en-route', params: { rideId: data.id } });
           return;
@@ -79,6 +93,7 @@ export default function RiderHome() {
           router.replace({ pathname: '/(rider)/matching', params: { rideId: data.id } });
           return;
         }
+        setOngoingRide(null);
         setCheckingRide(false);
       })();
       return () => {
@@ -182,14 +197,39 @@ export default function RiderHome() {
             </Card>
           )}
 
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm }}>
-            <Text style={[type.heading, { color: colors.text }]}>No ride booked yet</Text>
-            <Text style={{ fontSize: 14, color: colors.textSecondary, textAlign: 'center' }}>
-              When you're ready, book a ride{rider.fullName ? ` for ${rider.fullName.split(' ')[0]}` : ''} below.
-            </Text>
-          </View>
+          {/* With a ride already going, booking a second one isn't allowed
+              (one active ride per rider) — so Home offers the way back into
+              it rather than a button that would fail. */}
+          {ongoingRide ? (
+            <>
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm }}>
+                <Text style={[type.heading, { color: colors.text }]}>Your ride is still going</Text>
+                <Text style={{ fontSize: 14, color: colors.textSecondary, textAlign: 'center' }}>
+                  You can look around here — nothing is cancelled. Go back to it whenever you like.
+                </Text>
+              </View>
+              <PrimaryButton
+                label="Back to your ride"
+                onPress={() =>
+                  router.replace({
+                    pathname: ongoingRide.active ? '/(rider)/en-route' : '/(rider)/matching',
+                    params: { rideId: ongoingRide.id },
+                  })
+                }
+              />
+            </>
+          ) : (
+            <>
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm }}>
+                <Text style={[type.heading, { color: colors.text }]}>No ride booked yet</Text>
+                <Text style={{ fontSize: 14, color: colors.textSecondary, textAlign: 'center' }}>
+                  When you're ready, book a ride{rider.fullName ? ` for ${rider.fullName.split(' ')[0]}` : ''} below.
+                </Text>
+              </View>
 
-          <PrimaryButton label="Book a Ride" onPress={() => router.push('/(rider)/book')} />
+              <PrimaryButton label="Book a Ride" onPress={() => router.push('/(rider)/book')} />
+            </>
+          )}
         </View>
       </SafeAreaView>
     </Screen>

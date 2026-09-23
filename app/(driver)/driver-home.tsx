@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, type } from '../../constants/theme';
-import { Avatar, Card, Hint, IconButton, Screen, TopBar } from '../../components/ui';
+import { Avatar, Card, Hint, IconButton, PrimaryButton, Screen, TopBar } from '../../components/ui';
 import { LogOutIcon, PencilIcon } from '../../components/Icon';
 import { useProfiles } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -21,6 +21,10 @@ const MATURING_RIDE_CHECK_MS = 20000;
 export default function DriverHome() {
   const { driver, setDriver } = useProfiles();
   const { session, loading, signOut } = useAuth();
+  // Set when the driver deliberately stepped back here from their active
+  // ride, so the resume redirect below doesn't drag them straight back.
+  const { stay } = useLocalSearchParams<{ stay?: string }>();
+  const [ongoingRideId, setOngoingRideId] = useState<string | null>(null);
   const [available, setAvailable] = useState(false);
   // What the database has confirmed, as opposed to what the toggle shows.
   // Matching must key off this one: RLS decides which open rides the
@@ -125,6 +129,10 @@ export default function DriverHome() {
       (async () => {
         const { data: active, error } = await fetchActiveRideForDriver(userId);
         if (cancelled) return;
+        setOngoingRideId(active?.id ?? null);
+        // They came here on purpose (back arrow on the ride) — leave them be,
+        // and don't start offering new requests while a ride is still going.
+        if (active && stay === '1') return;
         if (active) {
           router.replace({ pathname: '/(driver)/active-ride', params: { rideId: active.id } });
           return;
@@ -148,7 +156,7 @@ export default function DriverHome() {
         unsubscribe?.();
         if (catchUp) clearInterval(catchUp);
       };
-    }, [checking, userId, confirmedAvailable])
+    }, [checking, userId, confirmedAvailable, stay])
   );
 
   if (checking) return null;
@@ -187,6 +195,21 @@ export default function DriverHome() {
             </IconButton>
           </Card>
 
+          {/* Mid-ride, the availability toggle is beside the point — this
+              driver isn't being offered anything until the ride ends. Show
+              the way back instead. */}
+          {ongoingRideId ? (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md }}>
+              <Text style={[type.heading, { color: colors.text, textAlign: 'center' }]}>You're on a ride</Text>
+              <Text style={{ fontSize: 14, color: colors.textSecondary, textAlign: 'center', maxWidth: 260 }}>
+                Nothing has changed — your rider is still with you. New requests stay paused until it's finished.
+              </Text>
+              <PrimaryButton
+                label="Back to your ride"
+                onPress={() => router.replace({ pathname: '/(driver)/active-ride', params: { rideId: ongoingRideId } })}
+              />
+            </View>
+          ) : (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.lg }}>
             <View
               style={{
@@ -219,6 +242,7 @@ export default function DriverHome() {
                 : 'Go available to start receiving specialized ride requests.'}
             </Text>
           </View>
+          )}
         </View>
       </SafeAreaView>
     </Screen>

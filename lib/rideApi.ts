@@ -80,7 +80,8 @@ export type RideRequestData = {
   needsSnapshot: NeedsSnapshot;
   status: RideStatus;
   matchedDriverId: string | null;
-  pin: string | null;
+  // No pin here on purpose (0018): it lives in ride_pins, which drivers
+  // cannot read — see fetchRidePin / startRideWithPin.
   createdAt: string; // ISO — when the ride was booked (how long it's been searching)
   feeCents: number; // 0 unless a late cancellation or no-show applied (0016)
   feeReason: 'late_cancellation' | 'no_show' | null;
@@ -100,15 +101,10 @@ function mapRow(r: any): RideRequestData {
     needsSnapshot: r.needs_snapshot ?? {},
     status: r.status,
     matchedDriverId: r.matched_driver_id,
-    pin: r.pin,
     createdAt: r.created_at,
     feeCents: r.fee_cents ?? 0,
     feeReason: r.fee_reason ?? null,
   };
-}
-
-function generatePin(): string {
-  return String(Math.floor(1000 + Math.random() * 9000));
 }
 
 export function buildNeedsSnapshot(rider: RiderProfileData): NeedsSnapshot {
@@ -146,7 +142,8 @@ export async function createRideRequest(params: {
       ride_notes: params.rideNotes,
       needs_snapshot: params.needsSnapshot,
       status: 'requested',
-      pin: generatePin(),
+      // The pin is issued by a trigger (0018) — a pin the client chose
+      // wouldn't be a check on anything.
     })
     .select('*')
     .single();
@@ -386,24 +383,87 @@ export type MatchedDriverInfo = Pick<
   'fullName' | 'vehicle' | 'plate' | 'rampEquipped' | 'capabilityTags'
 >;
 
-export async function fetchMatchedDriver(driverId: string): Promise<{ data: MatchedDriverInfo | null; error: string | null }> {
-  const { data, error } = await supabase
-    .from('driver_profiles')
-    .select('full_name, vehicle, plate, ramp_equipped, capability_tags')
-    .eq('id', driverId)
-    .maybeSingle();
+// Asked by ride, not by driver id, and answered by the database (0018): the
+// old version read driver_profiles directly, and since RLS can't restrict
+// columns that exposed the driver's licence number, date of birth and phone
+// to any rider matched to them. This returns only what the screens show.
+export async function fetchMatchedDriver(rideId: string): Promise<{ data: MatchedDriverInfo | null; error: string | null }> {
+  const { data, error } = await supabase.rpc('matched_driver_public', { p_ride_id: rideId });
+  if (error?.code === '42501') return { data: null, error: 'That is not your ride.' };
   if (error) return { data: null, error: error.message };
-  if (!data) return { data: null, error: null };
+  if (!data) return { data: null, error: null }; // no driver matched yet
+  const row = data as any;
   return {
     data: {
-      fullName: data.full_name ?? '',
-      vehicle: data.vehicle ?? '',
-      plate: data.plate ?? '',
-      rampEquipped: data.ramp_equipped ?? 'Yes',
-      capabilityTags: data.capability_tags ?? [],
+      fullName: row.full_name ?? '',
+      vehicle: row.vehicle ?? '',
+      plate: row.plate ?? '',
+      rampEquipped: row.ramp_equipped ?? 'Yes',
+      capabilityTags: row.capability_tags ?? [],
     },
     error: null,
   };
+}
+
+// The rider's copy of the pickup pin (0018). Drivers have no read access to
+// this table at all — they check the pin through startRideWithPin.
+export async function fetchRidePin(rideId: string): Promise<{ data: string | null; error: string | null }> {
+  const { data, error } = await supabase.from('ride_pins').select('pin').eq('ride_id', rideId).maybeSingle();
+  if (error) return { data: null, error: error.message };
+  return { data: data?.pin ?? null, error: null };
+}
+
+// The driver confirms the pin and the ride starts in the same call, so a
+// wrong pin can't be stepped past by calling the status update directly.
+// Five wrong attempts lock it — four digits is only 10,000 guesses.
+export async function startRideWithPin(rideId: string, pin: string): Promise<{ error: string | null }> {
+  const { data, error } = await supabase.rpc('start_ride_with_pin', { p_ride_id: rideId, p_pin: pin });
+  if (error?.code === '55000') return { error: error.message.replace(/^.*?:\s*/, '') };
+  if (error?.code === '42501') return { error: "You're no longer the driver on this ride." };
+  if (error) return { error: error.message };
+  // A wrong pin comes back as a result rather than an error, so the attempt
+  // counter survives (0019).
+  const row = (data ?? {}) as any;
+  if (row.started === false) {
+    const left = Number(row.attempts_left ?? 0);
+    return {
+      error:
+        left > 0
+          ? `That PIN doesn't match. Ask the rider to read the PIN shown in their app — ${left} ${left === 1 ? 'try' : 'tries'} left.`
+          : "That PIN doesn't match, and that was the last try. Contact support to start this ride.",
+    };
+  }
+  return { error: null };
+}
+
+export type EmergencyContactForDriver = { id: string; name: string; phone: string };
+
+// The rider's emergency contacts, readable by the matched driver only between
+// pickup and dropoff (migration 0020). Every call is logged for the rider, so
+// this must stay behind a deliberate tap on the driver's screen — never a
+// fetch on render, which would fill the rider's access log with views that
+// never happened.
+export async function fetchRideEmergencyContacts(
+  rideId: string
+): Promise<{ data: EmergencyContactForDriver[]; error: string | null }> {
+  const { data, error } = await supabase.rpc('ride_emergency_contacts', { p_ride_id: rideId });
+  if (error?.code === '42501') return { data: [], error: "You're no longer the driver on this ride." };
+  if (error?.code === '55000') return { data: [], error: 'Emergency contacts are only available during the ride.' };
+  if (error) return { data: [], error: error.message };
+  return { data: (data ?? []) as EmergencyContactForDriver[], error: null };
+}
+
+// The other half of the promise on the profile screen: the rider can see when
+// a driver opened their emergency contacts. RLS (0020) limits this to the
+// rider's own rides, so a caregiver booking on their behalf sees nothing.
+export async function fetchEmergencyAccessForRide(rideId: string): Promise<{ data: string[]; error: string | null }> {
+  const { data, error } = await supabase
+    .from('emergency_contact_access')
+    .select('viewed_at')
+    .eq('ride_id', rideId)
+    .order('viewed_at');
+  if (error) return { data: [], error: error.message };
+  return { data: (data ?? []).map((r: any) => r.viewed_at as string), error: null };
 }
 
 // Supabase-js caches channels by name — calling supabase.channel() again

@@ -107,7 +107,7 @@ the rider themselves or by a proxy on their behalf.
 | `assistance_needs` | tags: needs door-to-door escort, needs help with transfer to seat, needs extra time, service animal, other-freeform |
 | `standing_notes` | freeform, persists across rides ("always sits in front seat") |
 | `identification_aid` | set by proxy (or rider) ahead of time to help a driver who's never met the rider confirm they have the right person — e.g. photo, physical description, "will be wearing a red jacket," name to call out. Shown to driver alongside the PIN at pickup. |
-| `emergency_contacts[]` | name/phone/relationship — separate from the proxy; who to reach if something goes wrong on a ride |
+| `emergency_contacts[]` | name/phone/relationship — separate from the proxy; who to reach if something goes wrong on a ride. **Built (0020):** the matched driver can read name + phone while the ride is at `arrived` or `in_progress`, and not before or after. Address/email are never sent. Each read is logged to `emergency_contact_access`, which the rider can read and no client can write; the rider is shown when a driver opened them, during the ride and after. Proxies still cannot see these at all. |
 | `medical_contacts[]` | optional — doctor(s)/caretaker(s), name/phone/role, for context in a non-urgent situation |
 | — | **Not** a substitute for emergency services — app should surface a clear "call 911" action for actual emergencies rather than routing through these contacts |
 
@@ -147,11 +147,21 @@ the rider themselves or by a proxy on their behalf.
   it's the only way the history survives a driver handing a ride back before
   pickup, which moves the status `matched → requested`. No ETA is shown
   anywhere in the app: there's no routing or map data to base one on yet.
-- **Pickup identity verification — DECIDED**: a PIN code shown in the driver
-  app, confirmed against the rider/proxy app, plus the rider profile's
-  `identification_aid` (photo/description/what-they're-wearing) surfaced to
-  the driver beforehand — useful precisely because the driver may be meeting
-  someone whose profile a proxy set up and has never seen in person.
+- **Pickup identity verification — DECIDED**: a PIN code shown in the
+  rider/proxy app, read out to the driver, plus the rider profile's
+  `identification_aid` (description/what-they're-wearing — the photo half is
+  deferred, see §0c) surfaced to the driver beforehand — useful precisely
+  because the driver may be meeting someone whose profile a proxy set up and
+  has never seen in person.
+- **How the PIN is actually enforced — round 18** (`0018_hardening.sql`).
+  Pins live in `ride_pins`, which drivers have **no** read access to, are
+  issued by a database trigger (a client-chosen pin checks nothing), and are
+  verified by `start_ride_with_pin`, which performs the status change itself.
+  The driver's claim policy refuses to set `in_progress`, so the check can't
+  be stepped around by calling the ordinary status update. Five wrong
+  attempts lock the ride — four digits is 10,000 guesses. Until this round
+  the pin sat on `ride_requests`, which the matched driver can read in full,
+  and the comparison ran on the driver's own device.
 
 ### 2.6 Post-ride Feedback
 - Separate from a generic star rating: a specific "how was the assistance

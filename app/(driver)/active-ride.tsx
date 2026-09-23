@@ -1,21 +1,25 @@
 import { useEffect, useState } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Linking, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing } from '../../constants/theme';
-import { Card, Hint, PrimaryButton, Screen, SecondaryButton, SectionLabel } from '../../components/ui';
-import { CheckIcon, ClockIcon } from '../../components/Icon';
+import { Card, Hint, IconButton, PrimaryButton, Screen, SecondaryButton, SectionLabel } from '../../components/ui';
+import { CheckIcon, ChevronLeftIcon, ClockIcon } from '../../components/Icon';
 import { RecognizeRiderCard, RiderNeedsCard, TripCard } from '../../components/RideCards';
 import {
   advanceRideStatus,
   driverCancelRide,
+  EmergencyContactForDriver,
+  fetchRideEmergencyContacts,
   fetchRideEvents,
   formatFee,
   markNoShow,
   NO_SHOW_FEE_CENTS,
   NO_SHOW_WAIT_MINUTES,
   PRE_PICKUP_STATUSES,
+  RideRequestData,
   RideStatus,
+  startRideWithPin,
 } from '../../lib/rideApi';
 import { useLiveRide } from '../../lib/useLiveRide';
 
@@ -95,11 +99,19 @@ export default function ActiveRide() {
   async function advance() {
     if (!ride || !step) return;
     setError(null);
-    // Checked on this device against the ride's PIN — enough to catch picking
-    // up the wrong person, but the driver's client can read the PIN, so real
-    // verification would need a server-side check (later hardening).
-    if (step.status === 'arrived' && pinEntry !== ride.pin) {
-      setError("That PIN doesn't match. Ask the rider to read the PIN shown in their app.");
+    // Starting the ride is the one step this screen can't do itself: the pin
+    // is checked in the database and the status change happens there (0018),
+    // so a wrong pin can't be stepped past. This app never sees the pin.
+    if (step.status === 'arrived') {
+      setBusy(true);
+      const { error: err } = await startRideWithPin(ride.id, pinEntry);
+      setBusy(false);
+      if (err) {
+        setError(err);
+        return;
+      }
+      setPinEntry('');
+      setRide((prev) => (prev && prev.status === 'arrived' ? { ...prev, status: 'in_progress' } : prev));
       return;
     }
     setBusy(true);
@@ -164,7 +176,14 @@ export default function ActiveRide() {
             backgroundColor: colors.surface,
           }}
         >
-          <Text style={{ flex: 1, fontSize: 19, fontWeight: '700', color: colors.text }}>Active Ride</Text>
+          {/* Without this the screen is a dead end: Driver Home is the only
+              route to sign-out and the profile, and its focus effect sends an
+              on-ride driver straight back here — so handing the ride back was
+              the only way off. The ride keeps running. */}
+          <IconButton onPress={() => router.replace({ pathname: '/(driver)/driver-home', params: { stay: '1' } })}>
+            <ChevronLeftIcon size={16} />
+          </IconButton>
+          <Text style={{ flex: 1, fontSize: 19, fontWeight: '700', color: colors.text, marginLeft: spacing.md }}>Active Ride</Text>
           <View
             style={{
               backgroundColor: cancelled ? colors.alertSoft : colors.positiveSoft,
@@ -197,6 +216,7 @@ export default function ActiveRide() {
           <RiderNeedsCard ride={ride} />
           <RecognizeRiderCard ride={ride} />
           <TripCard ride={ride} />
+          {!cancelled && <EmergencyContactsCard ride={ride} />}
         </ScrollView>
 
         {step && !cancelled && (
@@ -290,6 +310,54 @@ export default function ActiveRide() {
         )}
       </SafeAreaView>
     </Screen>
+  );
+}
+
+// Emergency contacts, available only between pickup and dropoff (0020).
+// Deliberately kept behind a tap and not fetched on render: the database logs
+// every read for the rider, so an automatic fetch would report a driver as
+// having looked at a family member's number when they never did.
+function EmergencyContactsCard({ ride }: { ride: RideRequestData }) {
+  const [contacts, setContacts] = useState<EmergencyContactForDriver[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (ride.status !== 'arrived' && ride.status !== 'in_progress') return null;
+
+  async function reveal() {
+    setLoading(true);
+    setError(null);
+    const { data, error: err } = await fetchRideEmergencyContacts(ride.id);
+    setLoading(false);
+    if (err) return setError(err);
+    setContacts(data);
+  }
+
+  return (
+    <Card>
+      <SectionLabel>If something goes wrong</SectionLabel>
+      {contacts === null ? (
+        <>
+          <Hint>
+            For emergencies only — call 911 first if someone is in danger. The rider is told whenever these are opened.
+          </Hint>
+          {error && <Hint>{error}</Hint>}
+          <SecondaryButton label={loading ? 'Opening…' : "Show rider's emergency contacts"} onPress={reveal} />
+        </>
+      ) : contacts.length === 0 ? (
+        <Hint>This rider hasn't saved an emergency contact.</Hint>
+      ) : (
+        <>
+          {contacts.map((c) => (
+            <Pressable key={c.id} onPress={() => Linking.openURL(`tel:${c.phone.replace(/[^\d+]/g, '')}`)}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>{c.name}</Text>
+              <Text style={{ fontSize: 14, fontWeight: '700', color: colors.accent }}>{c.phone}</Text>
+            </Pressable>
+          ))}
+          <Hint>Shared with you for this ride only. You'll lose access when the ride ends.</Hint>
+        </>
+      )}
+    </Card>
   );
 }
 

@@ -35,9 +35,13 @@ export default function BookRide() {
   // holds the signed-in person's own details.
   const { forRiderId } = useLocalSearchParams<{ forRiderId?: string }>();
   const [forRider, setForRider] = useState<RiderProfileData | null>(null);
+  const [selfProfile, setSelfProfile] = useState<RiderProfileData | null>(null);
   const [rideMode, setRideMode] = useState('Now');
-  const [pickup, setPickup] = useState('123 Maple Street');
-  const [dropoff, setDropoff] = useState('Riverside Medical Center');
+  // Empty on purpose: these used to be prefilled with demo addresses, which
+  // a rider could submit without noticing they'd booked a ride to a place
+  // they never chose.
+  const [pickup, setPickup] = useState('');
+  const [dropoff, setDropoff] = useState('');
   const [scheduledDate, setScheduledDate] = useState<Date | null>(null);
   const [scheduledTime, setScheduledTime] = useState('');
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -58,8 +62,20 @@ export default function BookRide() {
     })();
   }, [forRiderId]);
 
+  // ProfileContext is in-memory: reaching this screen directly (a refresh, a
+  // deep link, one of the app's own redirects) leaves it empty, and booking
+  // from that state would attach an EMPTY needs snapshot to the ride — every
+  // driver would then be matched as if the rider had no needs at all.
+  useEffect(() => {
+    if (forRiderId || !user || rider.fullName.trim() !== '') return;
+    (async () => {
+      const { data } = await fetchRiderProfile(user.id);
+      if (data) setSelfProfile(data);
+    })();
+  }, [forRiderId, user, rider.fullName]);
+
   // Whose ride this is: the signed-in rider, or the person they act for.
-  const subject = forRider ?? rider;
+  const subject = forRider ?? (rider.fullName.trim() !== '' ? rider : selfProfile ?? rider);
   const bookingForSomeoneElse = !!forRiderId;
   const riderName = subject.fullName.trim() || 'this rider';
   const needChips = [subject.mobilityAid !== 'None' ? subject.mobilityAid : null, ...subject.communicationNeeds, ...subject.assistanceNeeds]
@@ -69,7 +85,11 @@ export default function BookRide() {
   // Don't let a proxy submit before the rider's needs have loaded — the
   // snapshot on the ride is what every driver is matched against.
   const canSubmit =
-    (rideMode === 'Now' || (scheduledDate !== null && scheduledTime !== '')) && (!bookingForSomeoneElse || forRider !== null);
+    subject.fullName.trim() !== '' && // never book with an empty needs snapshot
+    pickup.trim() !== '' &&
+    dropoff.trim() !== '' &&
+    (rideMode === 'Now' || (scheduledDate !== null && scheduledTime !== '')) &&
+    (!bookingForSomeoneElse || forRider !== null);
 
   async function handleSubmit() {
     if (!user) return;
@@ -126,7 +146,16 @@ export default function BookRide() {
                 </View>
               </View>
             </View>
-            <Text style={{ color: colors.accentDark, fontWeight: '700', fontSize: 14 }}>Switch profile</Text>
+            {/* This used to be a dead label. Now that proxy links exist
+                (0017) it does what it always implied. */}
+            <Text
+              onPress={() =>
+                bookingForSomeoneElse ? router.replace('/(rider)/book') : router.push('/(rider)/people')
+              }
+              style={{ color: colors.accentDark, fontWeight: '700', fontSize: 14 }}
+            >
+              {bookingForSomeoneElse ? 'Book for myself instead' : 'Book for someone else'}
+            </Text>
           </Card>
 
           <SegmentedControl options={['Now', 'Schedule']} value={rideMode} onChange={setRideMode} />
@@ -171,7 +200,7 @@ export default function BookRide() {
                   {scheduledTime || (scheduledDate ? 'Choose a time' : 'Pick a date first')}
                 </Text>
               </Pressable>
-              <Hint>Scheduled rides get priority matching ahead of the pickup time.</Hint>
+              <Hint>We start looking for a driver about an hour before the pickup time.</Hint>
             </Card>
           )}
 
@@ -260,19 +289,21 @@ export default function BookRide() {
 
           {rideMode === 'Now' && (
             <Card>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <ClockIcon size={16} color={colors.textTertiary} />
-                  <Hint>Estimated wait</Hint>
-                </View>
-                <Text style={{ fontWeight: '700', fontSize: 14, color: colors.text }}>~9 min</Text>
+              {/* There used to be an "Estimated wait ~9 min" line here. There
+                  is no ETA anywhere in this app — no geo, no routing — so it
+                  was a number made up at build time. How long matching takes
+                  depends on who's online, which the matching screen reports
+                  honestly once the ride exists. */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <ClockIcon size={16} color={colors.textTertiary} />
+                <Hint>Specialized drivers may take a little longer than a standard ride — we'll tell you how it's going.</Hint>
               </View>
-              <Hint>Specialized drivers may take a little longer than a standard ride.</Hint>
               <Divider />
               <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <Hint>Estimated fare</Hint>
-                <Text style={{ fontWeight: '700', fontSize: 14, color: colors.text }}>$18–22</Text>
+                <Hint>Fare (flat placeholder)</Hint>
+                <Text style={{ fontWeight: '700', fontSize: 14, color: colors.text }}>$19.50</Text>
               </View>
+              <Hint>Pricing isn't worked out yet (SPEC §4) and nothing is charged.</Hint>
             </Card>
           )}
         </ScrollView>

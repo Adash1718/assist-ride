@@ -14,7 +14,7 @@ import {
   Screen,
   TopBar,
 } from './ui';
-import { CameraIcon, CloseIcon, HelpCircleIcon, PlusIcon } from './Icon';
+import { CameraIcon, CloseIcon, PlusIcon } from './Icon';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useProfiles } from '../contexts/ProfileContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -147,11 +147,6 @@ export function RiderProfileForm({
         <TopBar
           title={title}
           onBack={onBack}
-          right={
-            <IconButton>
-              <HelpCircleIcon />
-            </IconButton>
-          }
         />
 
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
@@ -275,6 +270,13 @@ export function RiderProfileForm({
 
           <Card>
             <SectionLabel>Emergency contacts</SectionLabel>
+            {/* Say plainly who can see these. The driver grant (migration
+                0020) is real, so the rider has to know about it before they
+                type a family member's number in. */}
+            <Hint>
+              Your driver can see a contact's name and number while you're with them — from pickup until drop-off, and not
+              after. We'll tell you if they do. Caregivers who book for you never see these.
+            </Hint>
             {rider.emergencyContacts.map((c) => (
               <View key={c.id} style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
                 <Avatar initials={initialsFrom(c.name)} size={40} />

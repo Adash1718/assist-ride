@@ -35,15 +35,18 @@ export default function DriverIncoming() {
   const deadline = useRef(Date.now() + ACCEPT_WINDOW_SECONDS * 1000);
   const [secondsLeft, setSecondsLeft] = useState(ACCEPT_WINDOW_SECONDS);
 
+  const goToActiveRide = () => router.replace({ pathname: '/(driver)/active-ride', params: { rideId } });
+
   useEffect(() => {
     if (!rideId) return;
     (async () => {
       const { data, error: err } = await fetchRideRequest(rideId);
+      if (data && user && data.matchedDriverId === user.id) return goToActiveRide();
       setRide(data);
       if (!err && !data) setGone(true); // already gone before this screen loaded
       setLoading(false);
     })();
-  }, [rideId]);
+  }, [rideId, user?.id]);
 
   // Is the offer still open? Realtime can't tell this screen: once the rider
   // cancels or another driver claims the ride, RLS hides the row from this
@@ -56,7 +59,13 @@ export default function DriverIncoming() {
     const t = setInterval(async () => {
       const { data, error: err } = await fetchRideRequest(rideId);
       if (err) return; // transient — try again next tick
-      if (!data || (data.status !== 'requested' && data.matchedDriverId !== user?.id)) setGone(true);
+      if (!data) return setGone(true);
+      // Already this driver's ride: they accepted it somewhere else (another
+      // tab or device). Send them to it rather than leaving a live offer up
+      // for a ride they're already on — and, worse, letting the expiry below
+      // decline it out from under them.
+      if (data.matchedDriverId === user?.id) return goToActiveRide();
+      if (data.status !== 'requested') setGone(true);
     }, STILL_OPEN_CHECK_MS);
     return () => clearInterval(t);
   }, [rideId, gone, user?.id]);
@@ -85,7 +94,13 @@ export default function DriverIncoming() {
     // exact same still-open ride and immediately re-show it, looping forever
     // on one ride this driver has already effectively passed on.
     (async () => {
-      if (rideId && user) await declineRideRequest(rideId, user.id);
+      if (!rideId || !user) return backToDriverHome();
+      // Re-read first: between the last poll and this tick the ride may have
+      // become this driver's own. Declining it then would strand a ride they
+      // are already assigned to.
+      const { data } = await fetchRideRequest(rideId);
+      if (data?.matchedDriverId === user.id) return goToActiveRide();
+      await declineRideRequest(rideId, user.id);
       backToDriverHome();
     })();
   }, [secondsLeft]);

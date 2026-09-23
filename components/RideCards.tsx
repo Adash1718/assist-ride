@@ -1,8 +1,9 @@
+import { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { colors, spacing } from '../constants/theme';
 import { Card, Hint, SectionLabel } from './ui';
 import { MapPinIcon, UsersIcon } from './Icon';
-import { RideRequestData } from '../lib/rideApi';
+import { fetchEmergencyAccessForRide, RideRequestData } from '../lib/rideApi';
 
 // What a driver needs to know about a ride, shared by the incoming-request
 // and active-ride screens (SPEC.md §3.D: the driver sees the rider's needs
@@ -83,6 +84,39 @@ export function TripCard({ ride }: { ride: RideRequestData }) {
         <Text style={{ fontSize: 14, color: colors.text }}>{ride.dropoff}</Text>
       </View>
       {ride.rideNotes?.trim() ? <Hint>"{ride.rideNotes}"</Hint> : null}
+    </Card>
+  );
+}
+
+// Rider-facing counterpart to the driver's emergency-contacts card: the
+// profile screen promises "we'll tell you if they do", and this is where that
+// promise is kept. Renders nothing in the normal case where nobody looked.
+export function EmergencyAccessNotice({ rideId }: { rideId: string }) {
+  const [views, setViews] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!rideId) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await fetchEmergencyAccessForRide(rideId);
+      if (!cancelled) setViews(data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rideId]);
+
+  if (views.length === 0) return null;
+
+  const when = new Date(views[0]).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return (
+    <Card style={{ backgroundColor: colors.alertSoft, borderColor: colors.alert }}>
+      <SectionLabel>Your emergency contacts were opened</SectionLabel>
+      <Hint>
+        Your driver opened your emergency contacts at {when}
+        {views.length > 1 ? ` (and ${views.length - 1} more ${views.length === 2 ? 'time' : 'times'})` : ''}. They can see a
+        contact's name and number until this ride ends.
+      </Hint>
     </Card>
   );
 }

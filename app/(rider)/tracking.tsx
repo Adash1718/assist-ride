@@ -104,12 +104,12 @@ export default function RideTracking() {
   // steps read "Driver assigned" instead.
   const matchedDriverId = ride?.matchedDriverId;
   useEffect(() => {
-    if (!matchedDriverId) return;
+    if (!matchedDriverId || !rideId) return;
     (async () => {
-      const { data } = await fetchMatchedDriver(matchedDriverId);
+      const { data } = await fetchMatchedDriver(rideId);
       if (data) setDriverInfo(data);
     })();
-  }, [matchedDriverId]);
+  }, [matchedDriverId, rideId]);
 
   const riderFirstName = rider.fullName.trim().split(' ')[0] || 'this rider';
   const driverName = driverInfo?.fullName.trim() || null;

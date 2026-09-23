@@ -8,7 +8,6 @@ import { AlertCircleIcon, CalendarIcon, CarIcon, CheckIcon, ClockIcon } from '..
 import { DatePickerModal } from '../../components/DatePickerModal';
 import { TimePickerModal } from '../../components/TimePickerModal';
 import { useProfiles } from '../../contexts/ProfileContext';
-import { backOr } from '../../lib/nav';
 import { formatDateLong, parseTimeLabel } from '../../lib/dateTime';
 import {
   ACTIVE_RIDE_STATUSES,
@@ -190,7 +189,9 @@ export default function Matching() {
   return (
     <Screen>
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-        <TopBar title={title} onBack={() => backOr('/(rider)/home')} />
+        {/* Same as en-route: Home needs `stay` or its focus effect sends the
+            rider right back to the search they just stepped out of. */}
+        <TopBar title={title} onBack={() => router.replace({ pathname: '/(rider)/home', params: { stay: '1' } })} />
 
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
           {afterDriverCancel && (

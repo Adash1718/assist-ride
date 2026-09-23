@@ -8,7 +8,6 @@ import {
   Chip,
   Divider,
   Hint,
-  IconButton,
   PrimaryButton,
   SectionLabel,
   SegmentedControl,
@@ -16,7 +15,7 @@ import {
   Stepper,
   TopBar,
 } from './ui';
-import { HelpCircleIcon, ShieldIcon } from './Icon';
+import { ShieldIcon } from './Icon';
 import { useState } from 'react';
 import { useProfiles } from '../contexts/ProfileContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -113,11 +112,6 @@ export function DriverProfileForm({
         <TopBar
           title={title}
           onBack={onBack}
-          right={
-            <IconButton>
-              <HelpCircleIcon />
-            </IconButton>
-          }
         />
 
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>

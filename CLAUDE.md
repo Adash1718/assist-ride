@@ -118,19 +118,61 @@ the app by phase/role rather than by feature:
   themselves (SPEC.md §3.C2 lists the hard rules vs the advisory ones).
   Ranking between eligible drivers doesn't exist yet — first come, first
   served.
+- **Assume any client can call the API with its own token** — the screens are
+  not the security boundary. Round 18 closed three places where they were
+  being treated as one: the pickup pin (now in `ride_pins`, unreadable by
+  drivers, checked by `start_ride_with_pin`, which is also the only way to
+  reach `in_progress`); riders setting arbitrary statuses (their UPDATE
+  policy is now limited to still-`requested` rides and can't change status
+  at all); and riders reading a driver's whole profile row, licence number
+  included, because RLS can't restrict columns — `matched_driver_public()`
+  returns the five fields the screens show, and the old policy is
+  `using (false)`.
+- A wrong pin RETURNS a result rather than raising (0019): raising rolls the
+  transaction back, which silently undid the attempt counter and made the
+  lockout a no-op. Anything that must persist alongside a rejection has the
+  same problem.
+- **A "resume your ride" redirect must have a way out.** Both Homes send a
+  user with a live ride straight back to it on every focus. Home is also the
+  only route to sign-out and the profile, so for a while the ride screen was
+  a dead end whose only exits ended the ride — the rider had to cancel (and
+  eat the $12 late fee) to sign out, and the driver's screen had no back
+  arrow at all. Fixed with an explicit `stay=1` param: the back arrow
+  navigates to Home with it, Home honours it by skipping the redirect and
+  offering "Back to your ride" instead. Anything that force-redirects on
+  focus needs the same escape hatch.
 - Money-ish decisions are made in the database, never in a screen: the
   rider's cancel goes through `rider_cancel_ride` (0016), which decides from
   the `ride_events` log whether the 15-minute grace window has passed, and
   `mark_no_show` enforces "matched driver, at pickup, waited 10 minutes".
   Clients only mirror the constants (`CANCEL_GRACE_MINUTES` and friends in
   `rideApi.ts`) for wording. Nothing charges anyone — the fee is recorded on
-  the ride.
+  the ride. **A screen must never be more optimistic than the server about a
+  fee**: en-route decided "this cancel is free" from `matchedAt` (a
+  best-effort `fetchRideEvents` whose error was discarded) and a
+  timer-updated `now` (which a throttled background tab leaves minutes
+  behind). Either being wrong showed "Free to cancel", skipped the
+  confirmation, and cancelled on one tap while the server charged $12. Now
+  the confirmation is required unless the screen can *prove* it's inside the
+  grace window, `Date.now()` is read fresh at tap time, and "unknown" says so
+  rather than guessing either way.
 - `proxyApi.ts` — proxy links (0017): who may book for a rider, and who a
   rider books for. Two directions of the same table; RLS decides which rows
   come back, so `fetchLinksForMe()` is the same query either way. A ride
   booked by a proxy has `requested_by` = the proxy and `rider_id` = the
   rider, and **both** can see and cancel it — anything that scopes rides to
   one person needs both columns (`fetchActiveRideForRider` does).
+- Emergency contacts are readable by the **matched driver only between
+  `arrived` and `in_progress`** (0020), via `ride_emergency_contacts()` —
+  name and phone, never the contact's address or email, since RLS can't
+  restrict columns. Every read logs a row to `emergency_contact_access`,
+  which the rider can read and nobody can write through the API. Two
+  consequences for anything built on top: the function is **volatile, not
+  stable**, because it writes; and the driver's card must stay behind a
+  deliberate tap, because fetching on render would log views that never
+  happened and make the rider-facing notice a lie. This grant is drivers
+  only — 0017 still keeps proxies away from these, and the People screen
+  says so.
 - `feedbackApi.ts` — post-ride feedback (0014): one immutable row per ride,
   written by the requester only after the ride is `completed`. Drivers can't
   read rows at all — `fetchMyDriverRating()` gives a driver their own
@@ -159,6 +201,15 @@ trail — 0002 → 0006 fixed each other's bugs, worth reading in order; note
   ride every 2s instead. (Observed while testing: in a hidden, unfocused
   Chrome tab, live updates and timers can land well after the fact — test
   screens with the tab in the foreground.)
+- That 2s re-check has three outcomes, not two: gone, still open, **or
+  already mine**. The third one was missed at first — the poll exempted
+  "matched to me" from its gone-check, so the offer stayed up on a ride the
+  driver already had and the 45s expiry then called `declineRideRequest` on
+  their own ride. Reachable whenever an accept lands on another tab or
+  device. `incoming.tsx` now routes to the active ride on load, on poll, and
+  on expiry (re-reading first, to cover the gap between the two timers). The
+  database refused the bogus decline anyway — `decline_ride_request` only
+  touches `requested` rides — which is why it stayed invisible for so long.
 - Availability checks run through a `SECURITY DEFINER` SQL function
   (`is_available_driver`), not a direct RLS-to-RLS query — a direct cross-
   table policy reference between `driver_profiles` and `ride_requests`
