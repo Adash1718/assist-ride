@@ -162,6 +162,9 @@ export default function ActiveRide() {
   if (loading || !ride) return null;
 
   const pillLabel = cancelled ? 'Cancelled' : step?.label ?? '';
+  // The name the ride was booked under (the snapshot, not a profile read —
+  // drivers can't read rider profiles).
+  const riderFirstName = (ride.needsSnapshot?.riderName ?? '').trim().split(' ')[0] || 'your rider';
 
   return (
     <Screen>
@@ -216,6 +219,19 @@ export default function ActiveRide() {
           <RiderNeedsCard ride={ride} />
           <RecognizeRiderCard ride={ride} />
           <TripCard ride={ride} />
+          {!cancelled && (
+            <Card>
+              {/* No phone number in either direction (0022) — and the rider
+                  may be someone who can't take a call, which is half the
+                  reason they booked this service. */}
+              <SectionLabel>Need to reach them?</SectionLabel>
+              <Hint>Messages go straight to {riderFirstName} — and to the person who booked, if a caregiver arranged it.</Hint>
+              <SecondaryButton
+                label={`Message ${riderFirstName}`}
+                onPress={() => router.push({ pathname: '/chat', params: { rideId: ride.id, title: riderFirstName } })}
+              />
+            </Card>
+          )}
           {!cancelled && <EmergencyContactsCard ride={ride} />}
         </ScrollView>
 

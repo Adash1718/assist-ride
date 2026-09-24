@@ -26,6 +26,9 @@ import { formatDateLong, parseTimeLabel } from '../../lib/dateTime';
 import { DatePickerModal } from '../../components/DatePickerModal';
 import { TimePickerModal } from '../../components/TimePickerModal';
 import { buildNeedsSnapshot, createRideRequest } from '../../lib/rideApi';
+import { geocode, GeoPoint, route } from '../../lib/geoApi';
+
+type LookupState = 'idle' | 'looking' | 'found' | 'notFound';
 
 export default function BookRide() {
   const { rider } = useProfiles();
@@ -42,6 +45,31 @@ export default function BookRide() {
   // they never chose.
   const [pickup, setPickup] = useState('');
   const [dropoff, setDropoff] = useState('');
+  // Geocoding results, looked up when the rider leaves the field. Shown back
+  // to them rather than used silently: the lookup service always returns its
+  // best guess, and a vague address like "5 Oak Avenue" confidently resolves
+  // to a street in London. A wrong pickup the rider can't see is worse than
+  // no pickup coordinate at all.
+  const [pickupPoint, setPickupPoint] = useState<GeoPoint | null>(null);
+  const [dropoffPoint, setDropoffPoint] = useState<GeoPoint | null>(null);
+  const [pickupLookup, setPickupLookup] = useState<LookupState>('idle');
+  const [dropoffLookup, setDropoffLookup] = useState<LookupState>('idle');
+
+  async function lookUp(
+    address: string,
+    setPoint: (p: GeoPoint | null) => void,
+    setState: (s: LookupState) => void
+  ) {
+    if (address.trim() === '') {
+      setState('idle');
+      setPoint(null);
+      return;
+    }
+    setState('looking');
+    const found = await geocode(address);
+    setPoint(found);
+    setState(found ? 'found' : 'notFound');
+  }
   const [scheduledDate, setScheduledDate] = useState<Date | null>(null);
   const [scheduledTime, setScheduledTime] = useState('');
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -102,6 +130,14 @@ export default function BookRide() {
       requestedTime = new Date(scheduledDate.getFullYear(), scheduledDate.getMonth(), scheduledDate.getDate(), hour, minute);
     }
 
+    // Look up only what the on-blur lookups didn't already resolve — the
+    // usual case is both are known and this costs nothing. Best-effort
+    // throughout (0023): if the service is slow or down, the ride books
+    // without coordinates rather than failing.
+    const from = pickupPoint ?? (await geocode(pickup));
+    const to = dropoffPoint ?? (await geocode(dropoff));
+    const leg = from && to ? await route(from, to) : null;
+
     const { data, error } = await createRideRequest({
       requestedBy: user.id,
       riderId: forRiderId ?? user.id,
@@ -112,6 +148,7 @@ export default function BookRide() {
       requestedTime: requestedTime.toISOString(),
       rideNotes: notes,
       needsSnapshot: buildNeedsSnapshot(subject),
+      geo: { pickup: from, dropoff: to, route: leg },
     });
 
     setSubmitting(false);
@@ -238,8 +275,17 @@ export default function BookRide() {
               }}
             >
               <MapPinIcon size={18} color={colors.textTertiary} />
-              <TextInput value={pickup} onChangeText={setPickup} style={{ fontSize: 16, flex: 1, color: colors.text }} />
+              <TextInput
+                value={pickup}
+                onChangeText={(t) => {
+                  setPickup(t);
+                  setPickupPoint(null);
+                }}
+                onBlur={() => lookUp(pickup, setPickupPoint, setPickupLookup)}
+                style={{ fontSize: 16, flex: 1, color: colors.text }}
+              />
             </View>
+            <AddressMatch state={pickupLookup} point={pickupPoint} />
             <Text style={type.label}>Dropoff</Text>
             <View
               style={{
@@ -253,8 +299,17 @@ export default function BookRide() {
               }}
             >
               <MapPinIcon size={18} color={colors.textTertiary} />
-              <TextInput value={dropoff} onChangeText={setDropoff} style={{ fontSize: 16, flex: 1, color: colors.text }} />
+              <TextInput
+                value={dropoff}
+                onChangeText={(t) => {
+                  setDropoff(t);
+                  setDropoffPoint(null);
+                }}
+                onBlur={() => lookUp(dropoff, setDropoffPoint, setDropoffLookup)}
+                style={{ fontSize: 16, flex: 1, color: colors.text }}
+              />
             </View>
+            <AddressMatch state={dropoffLookup} point={dropoffPoint} />
           </Card>
 
           <Card>
@@ -319,4 +374,16 @@ export default function BookRide() {
       </SafeAreaView>
     </Screen>
   );
+}
+
+// What the address lookup found, shown under the field. The rider is the only
+// one who can tell whether "5 Oak Avenue" meaning their street was matched to
+// the one in London, so they have to be able to see it.
+function AddressMatch({ state, point }: { state: LookupState; point: GeoPoint | null }) {
+  if (state === 'idle') return null;
+  if (state === 'looking') return <Hint>Looking up that address…</Hint>;
+  if (state === 'notFound' || !point) {
+    return <Hint>We couldn't find that address. You can still book — your driver will use what you typed.</Hint>;
+  }
+  return <Hint>Matched to: {point.label}</Hint>;
 }

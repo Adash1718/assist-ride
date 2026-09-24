@@ -11,6 +11,7 @@ import { initialsFrom } from '../../lib/format';
 import { ensureDriverProfileRow, fetchDriverProfile, isDriverProfileComplete, setDriverAvailability } from '../../lib/profileApi';
 import { DriverRating, fetchMyDriverRating } from '../../lib/feedbackApi';
 import { fetchActiveRideForDriver, fetchOldestOpenRequest, subscribeToIncomingRequests } from '../../lib/rideApi';
+import { clearDriverLocation, LocationSharing, startSharingLocation } from '../../lib/locationApi';
 
 // How often Driver Home re-checks for rides that became offerable without any
 // row changing: scheduled rides reaching their lead window (0013), and rides
@@ -25,6 +26,9 @@ export default function DriverHome() {
   // ride, so the resume redirect below doesn't drag them straight back.
   const { stay } = useLocalSearchParams<{ stay?: string }>();
   const [ongoingRideId, setOngoingRideId] = useState<string | null>(null);
+  // Location sharing state, and the stopper for the active watch (0024).
+  const [sharing, setSharing] = useState<LocationSharing>('off');
+  const stopSharing = useRef<(() => void) | null>(null);
   const [available, setAvailable] = useState(false);
   // What the database has confirmed, as opposed to what the toggle shows.
   // Matching must key off this one: RLS decides which open rides the
@@ -100,6 +104,20 @@ export default function DriverHome() {
     if (next) setConfirmedAvailable(true);
   }
 
+  // Location sharing lives and dies with availability (0024). Keyed off the
+  // DB-confirmed flag rather than the toggle, so it also resumes when a
+  // driver reloads while already online. The stopper deletes the stored
+  // position — "offline" has to mean the row is gone, not just ageing out.
+  useEffect(() => {
+    if (!userId || !confirmedAvailable) return;
+    const stop = startSharingLocation(userId, setSharing);
+    stopSharing.current = stop;
+    return () => {
+      stop();
+      stopSharing.current = null;
+    };
+  }, [userId, confirmedAvailable]);
+
   // Matching runs only while this screen is FOCUSED, not merely mounted:
   // Driver Home stays mounted underneath the incoming/active-ride screens
   // pushed on top of it, and a subscription living here would keep offering
@@ -169,6 +187,13 @@ export default function DriverHome() {
           right={
             <IconButton
               onPress={async () => {
+                // Clear the shared position BEFORE the session goes away.
+                // The unmount cleanup alone isn't enough: it runs after
+                // signOut(), so the DELETE goes out unauthenticated, RLS
+                // matches nothing, and PostgREST reports deleting zero rows
+                // as success — the position silently outlived the session.
+                stopSharing.current?.();
+                if (userId) await clearDriverLocation(userId);
                 await signOut();
                 router.replace('/');
               }}
@@ -241,6 +266,22 @@ export default function DriverHome() {
                 ? 'Waiting for a ride request that matches your vehicle and capabilities.'
                 : 'Go available to start receiving specialized ride requests.'}
             </Text>
+            {/* Say plainly what is being shared and what declining costs —
+                which is nothing. A driver who says no is ranked neutrally
+                (0024), and shouldn't have to wonder about that. */}
+            {available && (
+              <Text style={{ fontSize: 12.5, color: colors.textTertiary, textAlign: 'center', maxWidth: 280, lineHeight: 18 }}>
+                {sharing === 'on'
+                  ? 'Sharing your location while you\'re online, so nearby rides reach you first. It stops and is deleted when you go offline.'
+                  : sharing === 'asking'
+                    ? 'Asking your browser for your location…'
+                    : sharing === 'denied'
+                      ? "Location is off, so rides aren't matched to you by distance. You'll still be offered rides — nothing is held against you."
+                      : sharing === 'unsupported'
+                        ? "This browser can't share a location. You'll still be offered rides as normal."
+                        : "Location isn't being shared. You'll still be offered rides as normal."}
+              </Text>
+            )}
           </View>
           )}
         </View>

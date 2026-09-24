@@ -10,6 +10,7 @@ import { useProfiles } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchRideRequest, RideRequestData } from '../../lib/rideApi';
 import { fetchRideFeedback, RideFeedback, submitRideFeedback } from '../../lib/feedbackApi';
+import { formatDistance, formatDuration } from '../../lib/geoApi';
 
 function StarRow({
   value,
@@ -124,6 +125,11 @@ export default function RideComplete() {
           <Card>
             <TripRow k="Pickup" v={ride?.pickup ?? '—'} />
             <TripRow k="Dropoff" v={ride?.dropoff ?? '—'} />
+            {/* Only shown when the addresses actually resolved (0023) — the
+                fare below is still a placeholder, but this isn't. */}
+            {ride?.routeMeters != null && ride?.routeSeconds != null && (
+              <TripRow k="Trip" v={`${formatDistance(ride.routeMeters)} · ${formatDuration(ride.routeSeconds)}`} />
+            )}
             <Divider />
             {/* SPEC.md §4: pricing isn't worked out, so v1 shows a flat
                 placeholder. Labelled as one rather than presented as a real

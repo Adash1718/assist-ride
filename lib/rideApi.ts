@@ -1,5 +1,6 @@
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from './supabase';
+import type { GeoPoint, RouteInfo } from './geoApi';
 import { DriverProfileData, RiderProfileData } from '../contexts/ProfileContext';
 
 // Real ride-request wiring (SPEC.md §2.4, supabase/migrations/0002_*.sql).
@@ -85,6 +86,12 @@ export type RideRequestData = {
   createdAt: string; // ISO — when the ride was booked (how long it's been searching)
   feeCents: number; // 0 unless a late cancellation or no-show applied (0016)
   feeReason: 'late_cancellation' | 'no_show' | null;
+  // Geocoding (0023) — null whenever the address didn't resolve, which is a
+  // normal outcome. Screens must show nothing rather than guess a distance.
+  pickupPoint: GeoPoint | null;
+  dropoffPoint: GeoPoint | null;
+  routeMeters: number | null;
+  routeSeconds: number | null;
 };
 
 function mapRow(r: any): RideRequestData {
@@ -104,6 +111,10 @@ function mapRow(r: any): RideRequestData {
     createdAt: r.created_at,
     feeCents: r.fee_cents ?? 0,
     feeReason: r.fee_reason ?? null,
+    pickupPoint: r.pickup_lat != null && r.pickup_lng != null ? { lat: r.pickup_lat, lng: r.pickup_lng, label: r.geo_pickup_label ?? r.pickup } : null,
+    dropoffPoint: r.dropoff_lat != null && r.dropoff_lng != null ? { lat: r.dropoff_lat, lng: r.dropoff_lng, label: r.geo_dropoff_label ?? r.dropoff } : null,
+    routeMeters: r.route_meters ?? null,
+    routeSeconds: r.route_seconds ?? null,
   };
 }
 
@@ -128,6 +139,9 @@ export async function createRideRequest(params: {
   requestedTime: string; // ISO
   rideNotes: string;
   needsSnapshot: NeedsSnapshot;
+  // Best-effort geocoding (0023). Any part may be null — a ride books
+  // without coordinates rather than failing when a lookup doesn't resolve.
+  geo?: { pickup: GeoPoint | null; dropoff: GeoPoint | null; route: RouteInfo | null };
 }): Promise<{ data: RideRequestData | null; error: string | null }> {
   const { data, error } = await supabase
     .from('ride_requests')
@@ -142,6 +156,15 @@ export async function createRideRequest(params: {
       ride_notes: params.rideNotes,
       needs_snapshot: params.needsSnapshot,
       status: 'requested',
+      pickup_lat: params.geo?.pickup?.lat ?? null,
+      pickup_lng: params.geo?.pickup?.lng ?? null,
+      dropoff_lat: params.geo?.dropoff?.lat ?? null,
+      dropoff_lng: params.geo?.dropoff?.lng ?? null,
+      geo_pickup_label: params.geo?.pickup?.label ?? null,
+      geo_dropoff_label: params.geo?.dropoff?.label ?? null,
+      route_meters: params.geo?.route?.meters ?? null,
+      route_seconds: params.geo?.route?.seconds ?? null,
+      geocoded_at: params.geo?.pickup || params.geo?.dropoff ? new Date().toISOString() : null,
       // The pin is issued by a trigger (0018) — a pin the client chose
       // wouldn't be a check on anything.
     })
@@ -301,7 +324,13 @@ export async function fetchOldestOpenRequest(): Promise<{ data: RideRequestData 
 // The cancellation policy (SPEC.md §4), decided in migration 0016 — these
 // mirror the SQL constants purely so the app can say what the rules are.
 // The numbers that actually apply are the ones in the function.
-export const CANCEL_GRACE_MINUTES = 15;
+//
+// CANCEL_GRACE_MINUTES is deliberately gone: the grace deadline now comes
+// from `cancel_quote()` (0021) per ride, and a spare 15 sitting here was an
+// invitation to recompute the rule client-side again — which is exactly how
+// the screen ended up promising "free to cancel" on a ride that cost $12.
+// LATE_CANCEL_FEE_CENTS survives only for the "we couldn't check" fallback
+// copy, where there is no quote to name a real number.
 export const LATE_CANCEL_FEE_CENTS = 1200;
 export const NO_SHOW_WAIT_MINUTES = 10;
 export const NO_SHOW_FEE_CENTS = 1500;
@@ -317,6 +346,35 @@ export type FeeOutcome = { feeCents: number; feeReason: 'late_cancellation' | 'n
 // decision to leave to the client. Free while still searching or inside the
 // grace window; a flat fee after it. Nothing charges anyone — no payments
 // exist in this app — the fee is recorded on the ride.
+export type CancelQuote = {
+  cancellable: boolean;
+  feeCents: number;
+  feeReason: string | null;
+  // When the free window shuts. Null means there's nothing to count down to:
+  // either no driver has been matched yet (always free) or the ride is past
+  // cancelling entirely.
+  freeUntil: number | null;
+};
+
+// What cancelling costs right now, decided by the same database function that
+// does the charging (0021). The screen used to work this out itself from the
+// event log plus its own copy of the rule, which is how it ended up promising
+// "free to cancel" on a ride the server then charged $12 for.
+export async function fetchCancelQuote(rideId: string): Promise<{ data: CancelQuote | null; error: string | null }> {
+  const { data, error } = await supabase.rpc('cancel_quote', { p_ride_id: rideId });
+  if (error) return { data: null, error: error.message };
+  const row = (data ?? {}) as any;
+  return {
+    data: {
+      cancellable: row.cancellable !== false,
+      feeCents: Number(row.fee_cents ?? 0),
+      feeReason: row.fee_reason ?? null,
+      freeUntil: row.free_until ? new Date(row.free_until).getTime() : null,
+    },
+    error: null,
+  };
+}
+
 export async function cancelRideRequest(rideId: string): Promise<{ data: FeeOutcome | null; error: string | null }> {
   const { data, error } = await supabase.rpc('rider_cancel_ride', { p_ride_id: rideId });
   if (error?.code === '55000') return { data: null, error: "This ride can't be cancelled any more — it has already started or ended." };

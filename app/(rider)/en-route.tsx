@@ -10,9 +10,9 @@ import { useProfiles } from '../../contexts/ProfileContext';
 import { initialsFrom } from '../../lib/format';
 import {
   cancelRideRequest,
-  CANCEL_GRACE_MINUTES,
+  CancelQuote,
+  fetchCancelQuote,
   fetchMatchedDriver,
-  fetchRideEvents,
   fetchRidePin,
   formatFee,
   LATE_CANCEL_FEE_CENTS,
@@ -20,6 +20,8 @@ import {
   RideStatus,
 } from '../../lib/rideApi';
 import { useLiveRide } from '../../lib/useLiveRide';
+import { fetchDriverLocationForRide } from '../../lib/locationApi';
+import { formatDuration, route, RouteInfo } from '../../lib/geoApi';
 
 // The rider's live view of a matched ride: follows the driver's progress
 // (on the way → arrived → riding) via Realtime as the driver advances it on
@@ -38,6 +40,9 @@ const STATUS_COPY: Partial<Record<RideStatus, { title: string; pill: string; ban
 // back to the search, not so long it feels stuck.
 const DRIVER_CANCEL_NOTICE_MS = 4000;
 const TICK_MS = 15000;
+// The driver is moving, so a stale ETA is a wrong ETA. Often enough to stay
+// honest, rare enough not to hammer the public router.
+const DRIVER_ETA_REFRESH_MS = 30000;
 
 export default function DriverEnRoute() {
   const { rider } = useProfiles();
@@ -47,8 +52,9 @@ export default function DriverEnRoute() {
   const [pin, setPin] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
-  const [matchedAt, setMatchedAt] = useState<number | null>(null);
+  const [quote, setQuote] = useState<CancelQuote | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [eta, setEta] = useState<RouteInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const leaving = useRef(false);
 
@@ -78,17 +84,48 @@ export default function DriverEnRoute() {
     return () => clearInterval(t);
   }, []);
 
-  // When the grace window started: the moment a driver was first matched,
-  // from the ride's own event log (0009). The database decides the fee
-  // (0016) — this is only so the screen can say what's coming.
+  // What a cancellation costs, straight from the function that does the
+  // charging (0021). Re-asked when the ride changes hands or moves on, since
+  // both can change the answer. Never computed here: this screen having its
+  // own copy of the rule is exactly what made it promise "free" on a ride the
+  // server charged for.
   useEffect(() => {
     if (!rideId) return;
+    let cancelled = false;
     (async () => {
-      const { data } = await fetchRideEvents(rideId);
-      const matched = data.find((e) => e.status === 'matched');
-      if (matched) setMatchedAt(new Date(matched.at).getTime());
+      const { data } = await fetchCancelQuote(rideId);
+      if (!cancelled && data) setQuote(data);
     })();
-  }, [rideId, matchedDriverId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [rideId, matchedDriverId, ride?.status]);
+
+  // How far away the driver actually is: their live position (0024, only
+  // shared while they're on the way to us) routed against the pickup (0023).
+  // Every part is optional — sharing off, position stale, address never
+  // geocoded, router down — and any of them means no ETA is shown at all
+  // rather than a guess.
+  useEffect(() => {
+    if (!rideId) return;
+    let cancelled = false;
+    const check = async () => {
+      const { data: point } = await fetchDriverLocationForRide(rideId);
+      if (cancelled) return;
+      if (!point || !ride?.pickupPoint) {
+        setEta(null);
+        return;
+      }
+      const leg = await route({ lat: point.lat, lng: point.lng, label: '' }, ride.pickupPoint);
+      if (!cancelled) setEta(leg);
+    };
+    void check();
+    const t = setInterval(check, DRIVER_ETA_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [rideId, ride?.pickupPoint?.lat, ride?.status]);
 
   const status = ride?.status;
   useEffect(() => {
@@ -117,8 +154,13 @@ export default function DriverEnRoute() {
     }
   }, [status, loading, ride]);
 
-  const graceEndsAt = matchedAt === null ? null : matchedAt + CANCEL_GRACE_MINUTES * 60000;
+  // The server's own deadline, not one derived from a local copy of the rule.
+  const graceEndsAt = quote?.freeUntil ?? null;
   const graceMinutesLeft = graceEndsAt === null ? null : Math.max(0, Math.ceil((graceEndsAt - now) / 60000));
+  // A fee the server has already quoted outranks the countdown: if it says
+  // there's a charge, say so even if the local clock hasn't caught up.
+  const quotedFeeCents = quote?.feeCents ?? 0;
+
   async function handleCancel() {
     if (!rideId) return;
     // Past the grace window — or whenever we can't prove we're inside it —
@@ -127,7 +169,7 @@ export default function DriverEnRoute() {
     // state: a throttled background tab can leave that state minutes behind,
     // which used to skip this confirmation entirely and cancel on one tap
     // while the server charged the late fee.
-    const proveFree = graceEndsAt !== null && Date.now() <= graceEndsAt;
+    const proveFree = quotedFeeCents === 0 && graceEndsAt !== null && Date.now() <= graceEndsAt;
     if (!proveFree && !confirmingCancel) {
       setConfirmingCancel(true);
       return;
@@ -149,8 +191,15 @@ export default function DriverEnRoute() {
   const copy = (status && STATUS_COPY[status]) || STATUS_COPY.matched!;
   const riding = status === 'in_progress';
   const driverCancelled = status === 'requested';
-  const driverName = driverInfo?.fullName.trim() || 'Your driver';
-  const driverFirstName = driverName.split(' ')[0];
+  // Splitting the fallback on a space produced "Your had to cancel" and
+  // "Your will confirm this" — the driver's details aren't loaded yet on a
+  // fresh open, or are gone entirely after a hand-back clears
+  // matched_driver_id. Fall back to a phrase that reads as one, with a
+  // capitalised form for the starts of sentences.
+  const driverKnown = !!driverInfo?.fullName.trim();
+  const driverName = driverKnown ? driverInfo!.fullName.trim() : 'Your driver';
+  const driverFirstName = driverKnown ? driverName.split(' ')[0] : 'your driver';
+  const DriverFirstName = driverKnown ? driverName.split(' ')[0] : 'Your driver';
   const vehicleLine = driverInfo?.vehicle.trim()
     ? `${driverInfo.vehicle} · ${driverInfo.rampEquipped === 'Yes' ? 'Wheelchair ramp van' : 'No ramp/lift'} · Plate ${driverInfo.plate || '—'}`
     : 'Vehicle details unavailable';
@@ -188,7 +237,7 @@ export default function DriverEnRoute() {
           {rideId && <EmergencyAccessNotice rideId={rideId} />}
           {driverCancelled && (
             <Card style={{ backgroundColor: colors.alertSoft, borderColor: colors.alert }}>
-              <Text style={{ fontSize: 16, fontWeight: '700', color: colors.alertDark }}>{driverFirstName} had to cancel</Text>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: colors.alertDark }}>{DriverFirstName} had to cancel</Text>
               <Text style={{ fontSize: 14, color: colors.text, lineHeight: 20 }}>
                 Your ride is still booked — we're finding a new driver{riderFirst ? ` for ${riderFirst}` : ''} now. You don't need to do anything.
               </Text>
@@ -221,7 +270,14 @@ export default function DriverEnRoute() {
               }}
             >
               <ClockIcon size={14} color={colors.text} />
-              <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>{copy.banner}</Text>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>
+                {/* A real routed ETA from the driver's live position, or the
+                    plain status. Never both invented — if we don't know where
+                    they are, we don't claim to. */}
+                {eta && (status === 'matched' || status === 'driver_en_route')
+                  ? `About ${formatDuration(eta.seconds)} away`
+                  : copy.banner}
+              </Text>
             </View>
           </View>
 
@@ -232,10 +288,6 @@ export default function DriverEnRoute() {
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontWeight: '700', fontSize: 16, color: colors.text }}>{driverName}</Text>
                 </View>
-                {/* The call and message buttons that used to sit here did
-                    nothing at all. Contacting a driver needs number masking
-                    (nobody's personal number should be handed out), so it's
-                    a real feature, not an icon. */}
               </View>
               <Hint>{vehicleLine}</Hint>
               {driverTags.length > 0 && (
@@ -245,6 +297,13 @@ export default function DriverEnRoute() {
                   ))}
                 </View>
               )}
+              {/* Messaging rather than a phone button: no number is exchanged
+                  either way, and several of this app's riders can't use a
+                  call at all (0022). */}
+              <SecondaryButton
+                label={`Message ${driverFirstName}`}
+                onPress={() => router.push({ pathname: '/chat', params: { rideId, title: driverFirstName } })}
+              />
             </Card>
           )}
 
@@ -268,7 +327,7 @@ export default function DriverEnRoute() {
                   </View>
                 ))}
               </View>
-              <Hint>{driverFirstName} will confirm this before starting the ride.</Hint>
+              <Hint>{DriverFirstName} will confirm this before starting the ride.</Hint>
             </Card>
           )}
 
@@ -295,17 +354,17 @@ export default function DriverEnRoute() {
             {confirmingCancel ? (
               <>
                 <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, textAlign: 'center' }}>
-                  {graceEndsAt === null
-                    ? `Cancel and pay up to ${formatFee(LATE_CANCEL_FEE_CENTS)}?`
-                    : `Cancel and pay ${formatFee(LATE_CANCEL_FEE_CENTS)}?`}
+                  {quotedFeeCents > 0
+                    ? `Cancel and pay ${formatFee(quotedFeeCents)}?`
+                    : `Cancel and pay up to ${formatFee(LATE_CANCEL_FEE_CENTS)}?`}
                 </Text>
-                {/* Only claim the window has passed when we actually know it
-                    has. If the match time never loaded, say so instead of
-                    inventing a certainty the screen doesn't have. */}
+                {/* Only claim the window has passed when the server says so.
+                    Without a quote we don't know, and saying so beats
+                    inventing a certainty this screen doesn't have. */}
                 <Hint>
-                  {graceEndsAt === null
-                    ? `We couldn't check how long ${driverFirstName} has been on the way. If the free window has passed, this charges the standard fee — you'll see the exact amount straight after.`
-                    : `${driverFirstName} is already on the way, so the free window has passed. Cancelling now charges the standard fee.`}
+                  {quotedFeeCents > 0
+                    ? `${DriverFirstName} is already on the way, so the free window has passed. This is the exact amount.`
+                    : `We couldn't check how long ${driverFirstName} has been on the way. If the free window has passed, this charges the standard fee — you'll see the exact amount straight after.`}
                 </Hint>
                 <View style={{ flexDirection: 'row', gap: 12 }}>
                   <SecondaryButton label="Keep my ride" onPress={() => setConfirmingCancel(false)} />
@@ -318,11 +377,15 @@ export default function DriverEnRoute() {
               <View style={{ alignItems: 'center', gap: 8 }}>
                 <SecondaryButton label={cancelling ? 'Cancelling…' : 'Cancel Ride'} onPress={handleCancel} />
                 <Text style={{ fontSize: 12, color: colors.textTertiary, textAlign: 'center' }}>
-                  {graceMinutesLeft === null
-                    ? `Cancelling may cost ${formatFee(LATE_CANCEL_FEE_CENTS)} — we'll confirm before charging`
-                    : graceMinutesLeft > 0
-                      ? `Free to cancel for the next ${graceMinutesLeft} min`
-                      : `Cancelling now costs ${formatFee(LATE_CANCEL_FEE_CENTS)}`}
+                  {quotedFeeCents > 0
+                    ? `Cancelling now costs ${formatFee(quotedFeeCents)}`
+                    : graceMinutesLeft === null
+                      ? quote
+                        ? 'Free to cancel'
+                        : `Cancelling may cost ${formatFee(LATE_CANCEL_FEE_CENTS)} — we'll confirm before charging`
+                      : graceMinutesLeft > 0
+                        ? `Free to cancel for the next ${graceMinutesLeft} min`
+                        : `Cancelling now costs ${formatFee(LATE_CANCEL_FEE_CENTS)}`}
                 </Text>
               </View>
             )}

@@ -4,6 +4,7 @@ import { colors, spacing } from '../constants/theme';
 import { Card, Hint, SectionLabel } from './ui';
 import { MapPinIcon, UsersIcon } from './Icon';
 import { fetchEmergencyAccessForRide, RideRequestData } from '../lib/rideApi';
+import { formatDistance, formatDuration } from '../lib/geoApi';
 
 // What a driver needs to know about a ride, shared by the incoming-request
 // and active-ride screens (SPEC.md §3.D: the driver sees the rider's needs
@@ -83,6 +84,14 @@ export function TripCard({ ride }: { ride: RideRequestData }) {
         <MapPinIcon size={18} color={colors.textTertiary} />
         <Text style={{ fontSize: 14, color: colors.text }}>{ride.dropoff}</Text>
       </View>
+      {/* Real numbers from the route looked up when the ride was booked
+          (0023), or nothing at all. The old "~8 min" here was invented and
+          was deleted for that reason — an absent ETA beats a made-up one. */}
+      {ride.routeMeters != null && ride.routeSeconds != null && (
+        <Hint>
+          About {formatDistance(ride.routeMeters)} · {formatDuration(ride.routeSeconds)} driving
+        </Hint>
+      )}
       {ride.rideNotes?.trim() ? <Hint>"{ride.rideNotes}"</Hint> : null}
     </Card>
   );

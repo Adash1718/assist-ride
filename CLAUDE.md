@@ -152,10 +152,16 @@ the app by phase/role rather than by feature:
   best-effort `fetchRideEvents` whose error was discarded) and a
   timer-updated `now` (which a throttled background tab leaves minutes
   behind). Either being wrong showed "Free to cancel", skipped the
-  confirmation, and cancelled on one tap while the server charged $12. Now
-  the confirmation is required unless the screen can *prove* it's inside the
-  grace window, `Date.now()` is read fresh at tap time, and "unknown" says so
-  rather than guessing either way.
+  confirmation, and cancelled on one tap while the server charged $12.
+  **0021 removed the second implementation rather than patching it**: the
+  rule now lives once, in `cancel_decision()`, and both `cancel_quote()` (a
+  read that charges nothing) and `rider_cancel_ride()` call it, so they
+  cannot disagree. The screen asks for a quote and displays the answer — it
+  does not work fees out. It still fails safe on top of that (confirmation
+  required unless it can prove the window is open, `Date.now()` read fresh
+  at tap time, a quoted fee outranking the local clock), because a quote can
+  always be missing. Anything else that duplicates a server-side money rule
+  should be collapsed the same way.
 - `proxyApi.ts` — proxy links (0017): who may book for a rider, and who a
   rider books for. Two directions of the same table; RLS decides which rows
   come back, so `fetchLinksForMe()` is the same query either way. A ride
@@ -173,6 +179,48 @@ the app by phase/role rather than by feature:
   happened and make the rider-facing notice a lie. This grant is drivers
   only — 0017 still keeps proxies away from these, and the People screen
   says so.
+- `locationApi.ts` — live driver position (0024), the basis of proximity
+  ranking and the rider's pickup ETA. Sharing is tied to the availability
+  toggle (keyed off the DB-confirmed flag, so it resumes on reload), and
+  going offline DELETES the row rather than letting it age out. One row per
+  driver, overwritten — there is no location history anywhere, deliberately.
+  Nobody reads the raw row but the driver: ranking uses it only inside
+  `SECURITY DEFINER` functions, and the rider gets coordinates through
+  `driver_location_for_ride` only while a driver is on the way to them (not
+  before a match, not once they're in the car).
+  **Scoring ratio matters**: proximity is worth up to 8 points and capability
+  matches 10 each, so being *close* can never outrank being *able* — a nearby
+  driver who can't take a wheelchair still loses to a capable one further
+  out. No location scores 4 (mid-range), so declining the permission is
+  neutral, never a penalty.
+  **Known gap (accepted 2026-09-24)**: the ETA can be ~75s stale (45s write
+  throttle + 30s refresh) and says nothing about its own freshness, and a
+  backgrounded Chrome tab throttles both timers so it can be much worse. On
+  native this is a non-issue; on web it's real.
+- `geoApi.ts` — geocoding (Nominatim) and routing (OSRM) over the public
+  OpenStreetMap services: no API key, so the project stays runnable by anyone
+  who clones it, at the cost of rate limits and no uptime promise. Every call
+  is short-timeout and returns null on any failure, and **every geo column in
+  0023 is nullable**: a ride books without coordinates rather than failing,
+  and screens show nothing rather than a guess (the rule that got the
+  invented "~8 min" deleted in round 17).
+  **The trap to know about**: Nominatim always returns its best guess and
+  never says "I'm not sure" — `5 Oak Avenue` resolves confidently to a street
+  in Enfield, London. So the booking screen looks the address up on blur and
+  shows the matched result back to the rider, who is the only one who can
+  tell a right match from a wrong one. Never use a geocode result silently.
+  Lookups are sequential, not parallel: Nominatim's policy is one request per
+  second.
+- `messageApi.ts` — the per-ride message thread (0022), and the reason there
+  is no phone number anywhere in this app. Readable by the rider, the matched
+  driver **and the proxy who booked**; `sender_id` is pinned to `auth.uid()`
+  inside the INSERT policy, so a client can't post as the other party. No
+  UPDATE/DELETE policies — messages are a record. Sending stops when the ride
+  ends (`ride_accepts_messages`), reading doesn't. Both participants keep
+  passing the SELECT policy for the whole ride and after, so unlike the offer
+  screen there's no Realtime visibility cliff to poll around. One shared
+  screen (`app/chat.tsx`) serves both sides; the only difference is whose
+  bubbles sit on the right, and two copies of a chat is two places to drift.
 - `feedbackApi.ts` — post-ride feedback (0014): one immutable row per ride,
   written by the requester only after the ride is `completed`. Drivers can't
   read rows at all — `fetchMyDriverRating()` gives a driver their own
@@ -201,6 +249,13 @@ trail — 0002 → 0006 fixed each other's bugs, worth reading in order; note
   ride every 2s instead. (Observed while testing: in a hidden, unfocused
   Chrome tab, live updates and timers can land well after the fact — test
   screens with the tab in the foreground.)
+- **When a suite fails right after an unrelated change, suspect the test's
+  assumption before the app.** Three times now the "regression" was a stale
+  expectation: a ride gone invisible under 0013's lead window, a plain status
+  update silently blocked by 0018, and `feedback-test` demanding a strict
+  decrease in an average that rounds to 1dp after 17 accumulated ratings
+  (feedback is immutable, so the data only grows). Check what the test
+  assumed about the world, then hunt the bug.
 - That 2s re-check has three outcomes, not two: gone, still open, **or
   already mine**. The third one was missed at first — the poll exempted
   "matched to me" from its gone-check, so the offer stayed up on a ride the

@@ -145,8 +145,23 @@ the rider themselves or by a proxy on their behalf.
   can read the log (whoever booked the ride, plus the ride's current driver)
   but never write it. The Tracking screen's timeline is built from it, and
   it's the only way the history survives a driver handing a ride back before
-  pickup, which moves the status `matched → requested`. No ETA is shown
-  anywhere in the app: there's no routing or map data to base one on yet.
+  pickup, which moves the status `matched → requested`.
+- **Geography — round 23** (`0023_ride_geo.sql`). A ride now carries pickup
+  and dropoff coordinates plus the driving distance and duration between
+  them, looked up when it's booked via OpenStreetMap's Nominatim (geocoding)
+  and OSRM (routing) — no API key, so the project needs no account to run.
+  The trip length is shown on the driver's trip card (including on the offer,
+  where they decide) and on the rider's completion screen.
+  - Every geo field is **nullable and best-effort**: an address that doesn't
+    resolve, or a service that's down, must never block a booking, and a
+    screen with no route shows nothing rather than an estimate.
+  - The booking screen **shows the rider what each address matched to**.
+    Nominatim always returns its best guess — "5 Oak Avenue" resolves to a
+    street in London — so a silent match could send a driver to the wrong
+    continent. Only the rider can spot that.
+  - **Still not built**: driver proximity. Ranking (§3.C) can't use distance
+    until drivers report a location, which nothing does yet; and there is no
+    live ETA for the driver's approach, only the pickup→dropoff leg.
 - **Pickup identity verification — DECIDED**: a PIN code shown in the
   rider/proxy app, read out to the driver, plus the rider profile's
   `identification_aid` (description/what-they're-wearing — the photo half is
@@ -162,6 +177,22 @@ the rider themselves or by a proxy on their behalf.
   attempts lock the ride — four digits is 10,000 guesses. Until this round
   the pin sat on `ride_requests`, which the matched driver can read in full,
   and the comparison ran on the driver's own device.
+
+### 2.5b Ride Messages
+- **Built in round 22** (`0022_ride_messages.sql`). A per-ride thread between
+  the rider, the matched driver, and the proxy who booked — a caregiver
+  arranging the pickup is exactly who a driver may need to reach.
+- **Chosen over masked phone calls deliberately.** Masking needs third-party
+  telephony (Twilio) to be real, and the alternative of building the plumbing
+  and stubbing the number would *look* like masking while actually exchanging
+  personal numbers. Messaging also fits the riders this app is for: someone
+  hard of hearing, or who needs extra time, or who prefers simple written
+  instructions (§2.2), often can't use a phone call at all — and text leaves
+  a record of what was agreed at the curb.
+- No phone number is exchanged in either direction. `sender_id` is pinned to
+  the authenticated user by the INSERT policy, there are no UPDATE or DELETE
+  policies (messages are a record, like §2.6 feedback), and sending stops
+  when the ride ends while reading stays open for both sides.
 
 ### 2.6 Post-ride Feedback
 - Separate from a generic star rating: a specific "how was the assistance
@@ -306,13 +337,23 @@ ride's needs**, then their rating (§2.6). Hard requirements are already
 guaranteed by §3.C2's filter, so the tag term mostly separates drivers on the
 advisory needs — e.g. a driver experienced with service animals is offered
 that ride first. Unrated drivers score as average (4.0), not worst, so a new
-driver isn't buried. Proximity remains unused: there is no geo in the app.
+driver isn't buried.
+
+**Proximity — added in round 24** (`0024_driver_location.sql`). A driver's
+live position, shared only while they're available and deleted when they go
+offline, contributes up to 8 points fading to 0 by 10km. Capability matches
+are worth 10 each **on purpose**: being close must never outrank being able,
+or this stops being a service for riders with access needs and becomes an
+ordinary rideshare. A driver with no usable position scores 4 — mid-range —
+so refusing the location permission costs no work. A ride whose address never
+geocoded has no pickup point, every driver scores neutral, and ranking
+degrades to exactly its round-15 behaviour.
 
 Declining, going offline or picking up another ride re-ranks everyone else
 immediately — the next driver doesn't wait out the stagger. For a scheduled
 ride the clock starts at its lead window (§4), not when it was booked.
 
-Still not built: §4's radius widening (no geo), and anything that acts on the
+Still not built: §4's radius widening, and anything that acts on the
 contradiction between a driver's assistance ratings and their capability tags.
 
 **D. Pre-arrival briefing** — driver sees rider's needs_snapshot before
@@ -382,6 +423,15 @@ approval → active.
     (`rider_cancel_ride`, `mark_no_show`), using the `ride_events` log (§2.5)
     for the times they depend on. The rider's cancel used to be a direct
     UPDATE, which would have left the fee to whatever the client claimed.
+  - **Round 21** went further: the rider is told what a cancellation costs
+    *before* committing to it, by `cancel_quote()` — a read that charges
+    nothing and answers from the same `cancel_decision()` the charge itself
+    uses. The screen no longer works fees out at all. It previously did, from
+    its own copy of the 15-minute rule, and got it wrong: a stale clock or a
+    failed event fetch showed "free to cancel" on a ride the server then
+    charged $12 for, with no confirmation step. A quote also reports
+    `cancellable: false` once a ride is past cancelling, so the screen
+    doesn't have to hard-code which statuses those are.
   - `no_show` was a valid status that nothing ever set, so a driver who
     waited and left had no way to end the ride. Now the matched driver can,
     from `arrived` only and only after the wait.
