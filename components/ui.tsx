@@ -23,13 +23,13 @@ export function TopBar({
   return (
     <View style={styles.topbar}>
       {onBack ? (
-        <IconButton onPress={onBack}>
+        <IconButton onPress={onBack} label="Go back">
           <ChevronLeftIcon />
         </IconButton>
       ) : (
         <View style={{ width: minTouchTarget }} />
       )}
-      <Text style={[type.title, { flex: 1, color: colors.text }]} numberOfLines={1}>
+      <Text style={[type.title, { flex: 1, color: colors.text }]} numberOfLines={1} accessibilityRole="header">
         {title}
       </Text>
       {right ?? <View style={{ width: minTouchTarget }} />}
@@ -37,10 +37,33 @@ export function TopBar({
   );
 }
 
-export function IconButton({ children, onPress }: { children: ReactNode; onPress?: () => void }) {
+// `label` is REQUIRED in spirit even though it's optional in the type: an
+// icon button with no label is announced by a screen reader as just "button",
+// which in this app means a blind rider cannot tell sign-out from back. Every
+// call site passes one; the optionality exists only so older call sites fail
+// loudly in review rather than silently at runtime.
+export function IconButton({
+  children,
+  onPress,
+  label,
+}: {
+  children: ReactNode;
+  onPress?: () => void;
+  label?: string;
+}) {
   return (
-    <Pressable onPress={onPress} style={styles.iconBtn} hitSlop={8}>
-      {children}
+    <Pressable
+      onPress={onPress}
+      style={styles.iconBtn}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      {/* The icon itself is decorative — the label above carries the meaning,
+          so don't let a screen reader read the SVG as a second element. */}
+      <View importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+        {children}
+      </View>
     </Pressable>
   );
 }
@@ -50,7 +73,13 @@ export function Card({ children, style }: { children: ReactNode; style?: object 
 }
 
 export function SectionLabel({ children }: { children: ReactNode }) {
-  return <Text style={type.sectionLabel}>{children}</Text>;
+  // Announced as a heading so screen-reader users can jump between sections
+  // instead of reading every card top to bottom.
+  return (
+    <Text style={type.sectionLabel} accessibilityRole="header">
+      {children}
+    </Text>
+  );
 }
 
 export function Hint({ children }: { children: ReactNode }) {
@@ -67,7 +96,16 @@ export function Chip({
   onPress?: () => void;
 }) {
   return (
-    <Pressable onPress={onPress} style={[styles.chip, selected && styles.chipSelected]}>
+    <Pressable
+      onPress={onPress}
+      style={[styles.chip, selected && styles.chipSelected]}
+      // Selectable chips are checkboxes, not buttons: "selected" has to be
+      // announced, or a rider choosing their mobility aid can't tell what
+      // they've already picked.
+      accessibilityRole={onPress ? 'checkbox' : 'text'}
+      accessibilityState={onPress ? { checked: !!selected } : undefined}
+      accessibilityLabel={label}
+    >
       <Text selectable={false} style={[styles.chipText, selected && styles.chipTextSelected]}>{label}</Text>
     </Pressable>
   );
@@ -79,6 +117,11 @@ export function PrimaryButton({ label, onPress, disabled }: { label: string; onP
       onPress={onPress}
       disabled={disabled}
       style={[styles.btn, { backgroundColor: disabled ? colors.surfaceAlt : colors.accent }]}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      // Without this a disabled button is announced as tappable, and a rider
+      // is left wondering why nothing happens.
+      accessibilityState={{ disabled: !!disabled }}
     >
       <Text selectable={false} style={[styles.btnText, { color: disabled ? colors.textTertiary : colors.surface }]}>{label}</Text>
     </Pressable>
@@ -87,7 +130,12 @@ export function PrimaryButton({ label, onPress, disabled }: { label: string; onP
 
 export function SecondaryButton({ label, onPress }: { label: string; onPress?: () => void }) {
   return (
-    <Pressable onPress={onPress} style={[styles.btn, { backgroundColor: colors.surfaceAlt, flex: 1 }]}>
+    <Pressable
+      onPress={onPress}
+      style={[styles.btn, { backgroundColor: colors.surfaceAlt, flex: 1 }]}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
       <Text selectable={false} style={[styles.btnText, { color: colors.text }]}>{label}</Text>
     </Pressable>
   );
@@ -103,11 +151,18 @@ export function SegmentedControl({
   onChange: (v: string) => void;
 }) {
   return (
-    <View style={styles.segmented}>
+    <View style={styles.segmented} accessibilityRole="radiogroup">
       {options.map((opt) => {
         const active = opt === value;
         return (
-          <Pressable key={opt} onPress={() => onChange(opt)} style={[styles.segment, active && styles.segmentActive]}>
+          <Pressable
+            key={opt}
+            onPress={() => onChange(opt)}
+            style={[styles.segment, active && styles.segmentActive]}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: active, checked: active }}
+            accessibilityLabel={opt}
+          >
             <Text selectable={false} style={[styles.segmentText, active && { color: colors.text }]}>{opt}</Text>
           </Pressable>
         );
@@ -116,21 +171,46 @@ export function SegmentedControl({
   );
 }
 
-export function Stepper({ value, onChange, min = 0, max = 6 }: { value: number; onChange: (v: number) => void; min?: number; max?: number }) {
+// `label` names what is being counted ("companions"), so the buttons don't
+// announce as a bare "minus" and "plus" with no idea what they change.
+export function Stepper({
+  value,
+  onChange,
+  min = 0,
+  max = 6,
+  label = 'value',
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+  label?: string;
+}) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
       <Pressable
         onPress={() => onChange(Math.max(min, value - 1))}
         style={styles.stepBtn}
         hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={`Fewer ${label}`}
+        accessibilityState={{ disabled: value <= min }}
       >
         <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>–</Text>
       </Pressable>
-      <Text style={{ fontSize: 18, fontWeight: '700', minWidth: 20, textAlign: 'center', color: colors.text }}>{value}</Text>
+      <Text
+        style={{ fontSize: 18, fontWeight: '700', minWidth: 20, textAlign: 'center', color: colors.text }}
+        accessibilityLabel={`${value} ${label}`}
+      >
+        {value}
+      </Text>
       <Pressable
         onPress={() => onChange(Math.min(max, value + 1))}
         style={styles.stepBtn}
         hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={`More ${label}`}
+        accessibilityState={{ disabled: value >= max }}
       >
         <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>+</Text>
       </Pressable>
@@ -138,9 +218,15 @@ export function Stepper({ value, onChange, min = 0, max = 6 }: { value: number; 
   );
 }
 
+// Initials are a visual shorthand for a name that is always shown next to
+// them, so announcing "E W" adds nothing but noise.
 export function Avatar({ initials, size = 48 }: { initials: string; size?: number }) {
   return (
-    <View style={[styles.avatar, { width: size, height: size, borderRadius: size / 2 }]}>
+    <View
+      style={[styles.avatar, { width: size, height: size, borderRadius: size / 2 }]}
+      importantForAccessibility="no-hide-descendants"
+      accessibilityElementsHidden
+    >
       <Text style={{ color: colors.textSecondary, fontWeight: '700', fontSize: size * 0.32 }}>{initials}</Text>
     </View>
   );

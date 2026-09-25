@@ -4,7 +4,7 @@ import { colors, radii, spacing, type } from '../constants/theme';
 import { formatPhoneInput, isValidPhone } from '../lib/validators';
 import { PrimaryButton, SecondaryButton } from './ui';
 
-export type EmergencyContactInput = { name: string; phone: string; address: string; email: string };
+export type EmergencyContactInput = { name: string; phone: string; relationship: string; address: string; email: string };
 export type MedicalContactInput = EmergencyContactInput & { specialty: string; hospital: string };
 
 function Field({
@@ -59,6 +59,7 @@ export function ContactModal({
 }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [relationship, setRelationship] = useState('');
   const [address, setAddress] = useState('');
   const [email, setEmail] = useState('');
   const [specialty, setSpecialty] = useState('');
@@ -105,6 +106,17 @@ export function ContactModal({
             placeholder="(555) 000-0000"
             keyboardType="phone-pad"
           />
+          {/* Emergency contacts only: this is what a driver is shown with
+              the name, so they know who answered. A doctor's role is already
+              covered by "Type of doctor" below. */}
+          {variant === 'emergency' && (
+            <Field
+              label="Relationship"
+              value={relationship}
+              onChangeText={setRelationship}
+              placeholder="e.g. Daughter, Support worker, Neighbour"
+            />
+          )}
           <Field label="Address" value={address} onChangeText={setAddress} placeholder="Street, city, state" />
           <Field label="Email" value={email} onChangeText={setEmail} placeholder="name@example.com" keyboardType="email-address" />
           {variant === 'doctor' && (
@@ -122,7 +134,7 @@ export function ContactModal({
               label="Add"
               disabled={!canSave}
               onPress={() => {
-                onSave({ name: name.trim(), phone, address: address.trim(), email: email.trim(), specialty, hospital });
+                onSave({ name: name.trim(), phone, relationship: relationship.trim(), address: address.trim(), email: email.trim(), specialty, hospital });
                 onClose();
               }}
             />

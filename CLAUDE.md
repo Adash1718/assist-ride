@@ -132,6 +132,35 @@ the app by phase/role rather than by feature:
   transaction back, which silently undid the attempt counter and made the
   lockout a no-op. Anything that must persist alongside a rejection has the
   same problem.
+- **This app is FOR people who use screen readers, so accessibility props are
+  load-bearing, not polish.** Round 29 added them at the primitives in
+  `components/ui.tsx` (every `IconButton` takes a `label`; `SectionLabel` and
+  `TopBar` titles are headers; selectable `Chip`s are checkboxes with
+  `accessibilityState`; `SegmentedControl` is a radiogroup; `Stepper` names
+  what it counts; `Avatar` and decorative icons are hidden), so new screens
+  inherit most of it. Two app-specific rules:
+  the rider's PIN is announced as ONE element read digit by digit ("6 1 7 2"),
+  because four unlabelled boxes left a blind rider unable to say their own
+  PIN aloud; and anything that CHANGES while you're looking at it needs a live
+  region — ride status is `polite`, errors are `assertive` alerts, since "3
+  tries left" is useless if it only appears on screen.
+  Still unaudited: onboarding, tracking, driver profile forms, contrast and
+  dynamic type.
+- **Never promise support that doesn't exist.** "Contact support" appeared in
+  four places with no support behind it anywhere; the worst was the PIN
+  lockout, which permanently bricked a ride at the kerb. 0028 gives the RIDER
+  (not the driver — that would undo the lockout) a "get a new PIN" escape.
+  Before writing copy that refers a user somewhere, check the somewhere
+  exists.
+- **Matching has FOUR independent gates, and a test that confuses them looks
+  like a bug.** A driver sees an open ride only if: they can serve it (0010),
+  haven't declined it (0006), it's in its lead window (0013), it's within the
+  widening radius (0027), AND their rank has come up (0015). Two of those are
+  time-based, so "why can't this driver see the ride?" is rarely one answer —
+  the radius suite initially failed because a fresh ride is invisible to the
+  second-ranked driver no matter how close they are. Isolate one gate at a
+  time (take the other driver offline, or age the ride) rather than asserting
+  visibility and assuming which gate caused it.
 - **A "resume your ride" redirect must have a way out.** Both Homes send a
   user with a live ride straight back to it on every focus. Home is also the
   only route to sign-out and the profile, so for a while the ride screen was
@@ -197,6 +226,18 @@ the app by phase/role rather than by feature:
   throttle + 30s refresh) and says nothing about its own freshness, and a
   backgrounded Chrome tab throttles both timers so it can be much worse. On
   native this is a non-issue; on web it's real.
+- `fare.ts` — the fare estimate (0026). **The rider's fare must never depend
+  on their needs.** It's computed from distance and the *routed driving
+  duration* only, so kerb time is structurally unmeterable: an assisted ride
+  takes longer to board, and charging for that would mean disabled riders pay
+  more for the same journey — which the ADA also prohibits
+  (28 CFR 36.301(c)). The extra work is paid to the DRIVER as a
+  platform-funded premium instead, never added to the fare. `fare-test.mjs`
+  asserts this directly (identical trips, wildly different needs, same rider
+  fare), because it is exactly the property a future "charge for wait time"
+  change would quietly break. The quote is stored on the ride at booking so
+  later rate changes can't rewrite history, and a ride with no route has no
+  price rather than a guessed one.
 - `geoApi.ts` — geocoding (Nominatim) and routing (OSRM) over the public
   OpenStreetMap services: no API key, so the project stays runnable by anyone
   who clones it, at the cost of rate limits and no uptime promise. Every call
@@ -249,6 +290,19 @@ trail — 0002 → 0006 fixed each other's bugs, worth reading in order; note
   ride every 2s instead. (Observed while testing: in a hidden, unfocused
   Chrome tab, live updates and timers can land well after the fact — test
   screens with the tab in the foreground.)
+- **ProfileContext is in-memory, and any screen that SAVES must load before
+  it renders.** `profile.tsx` rendered the rider form straight from context,
+  so a refresh or a direct URL showed a blank form — and that form writes.
+  Retyping a name and phone over it would have saved empty needs and an empty
+  standing note over the real profile, which is what every driver is matched
+  against. It now fetches when context is empty and renders nothing until it
+  has (`book.tsx` already did this). Applies to any future editing screen.
+- **A disclosure and the function it describes have to change together.**
+  The profile screen tells riders exactly what a driver can see; 0025 added
+  `relationship` to `ride_emergency_contacts()` and the copy still said "name
+  and number". Whenever that function's payload changes, the wording on the
+  profile screen changes in the same commit — otherwise the promise quietly
+  becomes false.
 - **When a suite fails right after an unrelated change, suspect the test's
   assumption before the app.** Three times now the "regression" was a stale
   expectation: a ride gone invisible under 0013's lead window, a plain status

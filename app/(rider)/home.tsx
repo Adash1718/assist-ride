@@ -127,6 +127,7 @@ export default function RiderHome() {
           title="Assist Ride"
           right={
             <IconButton
+              label="Sign out"
               onPress={async () => {
                 await signOut();
                 router.replace('/');
@@ -170,7 +171,7 @@ export default function RiderHome() {
                 )}
               </View>
             </View>
-            <IconButton onPress={() => router.push('/(rider)/profile')}>
+            <IconButton label="Edit profile" onPress={() => router.push('/(rider)/profile')}>
               <PencilIcon size={16} />
             </IconButton>
           </Card>

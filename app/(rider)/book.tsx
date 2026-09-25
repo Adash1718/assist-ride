@@ -25,8 +25,9 @@ import { initialsFrom } from '../../lib/format';
 import { formatDateLong, parseTimeLabel } from '../../lib/dateTime';
 import { DatePickerModal } from '../../components/DatePickerModal';
 import { TimePickerModal } from '../../components/TimePickerModal';
-import { buildNeedsSnapshot, createRideRequest } from '../../lib/rideApi';
-import { geocode, GeoPoint, route } from '../../lib/geoApi';
+import { buildNeedsSnapshot, createRideRequest, formatFee } from '../../lib/rideApi';
+import { geocode, GeoPoint, route, RouteInfo } from '../../lib/geoApi';
+import { fareBreakdown, riderFareCents } from '../../lib/fare';
 
 type LookupState = 'idle' | 'looking' | 'found' | 'notFound';
 
@@ -54,6 +55,10 @@ export default function BookRide() {
   const [dropoffPoint, setDropoffPoint] = useState<GeoPoint | null>(null);
   const [pickupLookup, setPickupLookup] = useState<LookupState>('idle');
   const [dropoffLookup, setDropoffLookup] = useState<LookupState>('idle');
+  // Routed as soon as both ends resolve, so the rider sees what the trip
+  // costs BEFORE committing to it. Until now the only number on this screen
+  // was a flat placeholder, and the real one appeared after the ride ended.
+  const [tripRoute, setTripRoute] = useState<RouteInfo | null>(null);
 
   async function lookUp(
     address: string,
@@ -70,6 +75,21 @@ export default function BookRide() {
     setPoint(found);
     setState(found ? 'found' : 'notFound');
   }
+  useEffect(() => {
+    if (!pickupPoint || !dropoffPoint) {
+      setTripRoute(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const leg = await route(pickupPoint, dropoffPoint);
+      if (!cancelled) setTripRoute(leg);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pickupPoint?.lat, pickupPoint?.lng, dropoffPoint?.lat, dropoffPoint?.lng]);
+
   const [scheduledDate, setScheduledDate] = useState<Date | null>(null);
   const [scheduledTime, setScheduledTime] = useState('');
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -136,7 +156,7 @@ export default function BookRide() {
     // without coordinates rather than failing.
     const from = pickupPoint ?? (await geocode(pickup));
     const to = dropoffPoint ?? (await geocode(dropoff));
-    const leg = from && to ? await route(from, to) : null;
+    const leg = tripRoute ?? (from && to ? await route(from, to) : null);
 
     const { data, error } = await createRideRequest({
       requestedBy: user.id,
@@ -354,11 +374,21 @@ export default function BookRide() {
                 <Hint>Specialized drivers may take a little longer than a standard ride — we'll tell you how it's going.</Hint>
               </View>
               <Divider />
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                <Hint>Fare (flat placeholder)</Hint>
-                <Text style={{ fontWeight: '700', fontSize: 14, color: colors.text }}>$19.50</Text>
-              </View>
-              <Hint>Pricing isn't worked out yet (SPEC §4) and nothing is charged.</Hint>
+              {tripRoute ? (
+                <>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Hint>Estimated fare</Hint>
+                    <Text style={{ fontWeight: '700', fontSize: 14, color: colors.text }}>
+                      {formatFee(riderFareCents(tripRoute.meters, tripRoute.seconds))}
+                    </Text>
+                  </View>
+                  {/* Show the working: a price a rider can't account for is
+                      barely better than a made-up one. */}
+                  <Hint>{fareBreakdown(tripRoute.meters, tripRoute.seconds)} · nothing is charged yet</Hint>
+                </>
+              ) : (
+                <Hint>Enter both addresses to see an estimated fare.</Hint>
+              )}
             </Card>
           )}
         </ScrollView>

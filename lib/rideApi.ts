@@ -1,6 +1,7 @@
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import type { GeoPoint, RouteInfo } from './geoApi';
+import { driverServicePremiumCents, riderFareCents } from './fare';
 import { DriverProfileData, RiderProfileData } from '../contexts/ProfileContext';
 
 // Real ride-request wiring (SPEC.md §2.4, supabase/migrations/0002_*.sql).
@@ -66,6 +67,10 @@ export type NeedsSnapshot = {
   communicationNeeds: string[];
   assistanceNeeds: string[];
   idDescription: string;
+  // "Anything drivers should always know?" from the rider's profile.
+  // Optional because rides booked before this was carried through don't
+  // have it — read it defensively.
+  standingNotes?: string;
 };
 
 export type RideRequestData = {
@@ -92,6 +97,10 @@ export type RideRequestData = {
   dropoffPoint: GeoPoint | null;
   routeMeters: number | null;
   routeSeconds: number | null;
+  // What the rider was quoted at booking, and what the driver earns on top
+  // for an assisted ride (0026). Null when the ride has no route to price.
+  fareEstimateCents: number | null;
+  driverPremiumCents: number | null;
 };
 
 function mapRow(r: any): RideRequestData {
@@ -115,6 +124,8 @@ function mapRow(r: any): RideRequestData {
     dropoffPoint: r.dropoff_lat != null && r.dropoff_lng != null ? { lat: r.dropoff_lat, lng: r.dropoff_lng, label: r.geo_dropoff_label ?? r.dropoff } : null,
     routeMeters: r.route_meters ?? null,
     routeSeconds: r.route_seconds ?? null,
+    fareEstimateCents: r.fare_estimate_cents ?? null,
+    driverPremiumCents: r.driver_premium_cents ?? null,
   };
 }
 
@@ -126,6 +137,11 @@ export function buildNeedsSnapshot(rider: RiderProfileData): NeedsSnapshot {
     communicationNeeds: rider.communicationNeeds,
     assistanceNeeds: rider.assistanceNeeds,
     idDescription: rider.idDescription,
+    // The profile asks for this under "Anything drivers should always
+    // know?" and then it went nowhere: it wasn't copied onto the ride, so
+    // no driver ever saw it. Snapshotted like every other need, so editing
+    // the profile can't rewrite what a driver was told about a past ride.
+    standingNotes: rider.standingNotes,
   };
 }
 
@@ -164,6 +180,12 @@ export async function createRideRequest(params: {
       geo_dropoff_label: params.geo?.dropoff?.label ?? null,
       route_meters: params.geo?.route?.meters ?? null,
       route_seconds: params.geo?.route?.seconds ?? null,
+      // Priced from the route at booking and stored, so the number quoted
+      // to this rider survives any later change to the rates (0026).
+      fare_estimate_cents: params.geo?.route
+        ? riderFareCents(params.geo.route.meters, params.geo.route.seconds)
+        : null,
+      driver_premium_cents: params.geo?.route ? driverServicePremiumCents(params.needsSnapshot) : null,
       geocoded_at: params.geo?.pickup || params.geo?.dropoff ? new Date().toISOString() : null,
       // The pin is issued by a trigger (0018) — a pin the client chose
       // wouldn't be a check on anything.
@@ -474,6 +496,18 @@ export async function fetchRidePin(rideId: string): Promise<{ data: string | nul
 // The driver confirms the pin and the ride starts in the same call, so a
 // wrong pin can't be stepped past by calling the status update directly.
 // Five wrong attempts lock it — four digits is only 10,000 guesses.
+// A rider (or their proxy) replaces the pin and clears the attempt counter
+// (0028). This is the way out of the five-wrong-attempts lockout, which used
+// to end at "contact support" — support that does not exist, leaving a ride
+// that could never start.
+export async function reissueRidePin(rideId: string): Promise<{ data: string | null; error: string | null }> {
+  const { data, error } = await supabase.rpc('reissue_ride_pin', { p_ride_id: rideId });
+  if (error?.code === '42501') return { data: null, error: 'This is no longer your ride.' };
+  if (error?.code === '55000') return { data: null, error: "This ride doesn't need a PIN right now." };
+  if (error) return { data: null, error: error.message };
+  return { data: ((data ?? {}) as any).pin ?? null, error: null };
+}
+
 export async function startRideWithPin(rideId: string, pin: string): Promise<{ error: string | null }> {
   const { data, error } = await supabase.rpc('start_ride_with_pin', { p_ride_id: rideId, p_pin: pin });
   if (error?.code === '55000') return { error: error.message.replace(/^.*?:\s*/, '') };
@@ -488,13 +522,13 @@ export async function startRideWithPin(rideId: string, pin: string): Promise<{ e
       error:
         left > 0
           ? `That PIN doesn't match. Ask the rider to read the PIN shown in their app — ${left} ${left === 1 ? 'try' : 'tries'} left.`
-          : "That PIN doesn't match, and that was the last try. Contact support to start this ride.",
+          : "That PIN doesn't match, and that was the last try. Ask the rider to tap \u201cGet a new PIN\u201d in their app, then try again.",
     };
   }
   return { error: null };
 }
 
-export type EmergencyContactForDriver = { id: string; name: string; phone: string };
+export type EmergencyContactForDriver = { id: string; name: string; phone: string; relationship?: string };
 
 // The rider's emergency contacts, readable by the matched driver only between
 // pickup and dropoff (migration 0020). Every call is logged for the rider, so

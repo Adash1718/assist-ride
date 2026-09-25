@@ -186,6 +186,7 @@ export default function DriverHome() {
           title="Assist Ride"
           right={
             <IconButton
+              label="Sign out"
               onPress={async () => {
                 // Clear the shared position BEFORE the session goes away.
                 // The unmount cleanup alone isn't enough: it runs after
@@ -215,7 +216,7 @@ export default function DriverHome() {
                   : 'No ratings yet'}
               </Hint>
             </View>
-            <IconButton onPress={() => router.push('/(driver)/driver-profile')}>
+            <IconButton label="Edit profile" onPress={() => router.push('/(driver)/driver-profile')}>
               <PencilIcon size={16} />
             </IconButton>
           </Card>

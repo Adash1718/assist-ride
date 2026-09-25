@@ -183,7 +183,7 @@ export default function ActiveRide() {
               route to sign-out and the profile, and its focus effect sends an
               on-ride driver straight back here — so handing the ride back was
               the only way off. The ride keeps running. */}
-          <IconButton onPress={() => router.replace({ pathname: '/(driver)/driver-home', params: { stay: '1' } })}>
+          <IconButton label="Back to driver home — your ride keeps going" onPress={() => router.replace({ pathname: '/(driver)/driver-home', params: { stay: '1' } })}>
             <ChevronLeftIcon size={16} />
           </IconButton>
           <Text style={{ flex: 1, fontSize: 19, fontWeight: '700', color: colors.text, marginLeft: spacing.md }}>Active Ride</Text>
@@ -245,7 +245,13 @@ export default function ActiveRide() {
               backgroundColor: colors.surface,
             }}
           >
-            {error && <Hint>{error}</Hint>}
+            {/* Announced, not just displayed: a driver who mistypes the PIN
+                needs to hear "3 tries left", not wonder why nothing happened. */}
+            {error && (
+              <Text accessibilityLiveRegion="assertive" accessibilityRole="alert" style={{ fontSize: 13, color: colors.alertDark }}>
+                {error}
+              </Text>
+            )}
 
             {confirmingCancel ? (
               <>
@@ -278,6 +284,8 @@ export default function ActiveRide() {
                   <TextInput
                     value={pinEntry}
                     onChangeText={(t) => setPinEntry(t.replace(/\D/g, '').slice(0, 4))}
+                    accessibilityLabel="Rider's 4-digit PIN"
+                    accessibilityHint="Ask the rider to read out the PIN shown in their app"
                     placeholder="Rider's 4-digit PIN"
                     placeholderTextColor={colors.textTertiary}
                     keyboardType="number-pad"
@@ -366,7 +374,15 @@ function EmergencyContactsCard({ ride }: { ride: RideRequestData }) {
         <>
           {contacts.map((c) => (
             <Pressable key={c.id} onPress={() => Linking.openURL(`tel:${c.phone.replace(/[^\d+]/g, '')}`)}>
-              <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>{c.name}</Text>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>
+                {c.name}
+                {/* Who they are to the rider (0025) — a driver ringing a
+                    stranger needs to know whether they've got a daughter or
+                    a support worker on the line. */}
+                {c.relationship?.trim() ? (
+                  <Text style={{ fontWeight: '600', color: colors.textSecondary }}> · {c.relationship}</Text>
+                ) : null}
+              </Text>
               <Text style={{ fontSize: 14, fontWeight: '700', color: colors.accent }}>{c.phone}</Text>
             </Pressable>
           ))}

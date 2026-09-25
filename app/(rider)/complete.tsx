@@ -8,7 +8,7 @@ import { CheckIcon, StarIcon } from '../../components/Icon';
 import { EmergencyAccessNotice } from '../../components/RideCards';
 import { useProfiles } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { fetchRideRequest, RideRequestData } from '../../lib/rideApi';
+import { fetchRideRequest, formatFee, RideRequestData } from '../../lib/rideApi';
 import { fetchRideFeedback, RideFeedback, submitRideFeedback } from '../../lib/feedbackApi';
 import { formatDistance, formatDuration } from '../../lib/geoApi';
 
@@ -131,10 +131,15 @@ export default function RideComplete() {
               <TripRow k="Trip" v={`${formatDistance(ride.routeMeters)} · ${formatDuration(ride.routeSeconds)}`} />
             )}
             <Divider />
-            {/* SPEC.md §4: pricing isn't worked out, so v1 shows a flat
-                placeholder. Labelled as one rather than presented as a real
-                charge — nothing bills anyone. */}
-            <TripRow k="Fare (flat placeholder)" v="$19.50" />
+            {/* The number this rider was quoted at booking (0026), read
+                back from the ride rather than recomputed — so a later change
+                to the rates can't rewrite what they were told. Still nothing
+                bills anyone. */}
+            {ride?.fareEstimateCents != null ? (
+              <TripRow k="Estimated fare" v={formatFee(ride.fareEstimateCents)} />
+            ) : (
+              <TripRow k="Fare" v="Not priced — no route for this trip" />
+            )}
           </Card>
 
           {existing ? (

@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { ContactRecord, DriverProfileData, MedicalContactRecord, RiderProfileData } from '../contexts/ProfileContext';
+import { ContactRecord, DriverProfileData, EmergencyContactRecord, MedicalContactRecord, RiderProfileData } from '../contexts/ProfileContext';
 
 // Bridges ProfileContext's camelCase shape to Supabase's snake_case columns
 // (supabase/migrations/0001_init.sql). Every call here can fail (network,
@@ -102,10 +102,11 @@ export async function fetchRiderProfile(userId: string): Promise<{ data: RiderPr
   if (profileRes.error) return { data: null, error: profileRes.error.message };
   if (!profileRes.data) return { data: null, error: null };
   const p = profileRes.data;
-  const emergencyContacts: ContactRecord[] = (emergencyRes.data ?? []).map((c: any) => ({
+  const emergencyContacts: EmergencyContactRecord[] = (emergencyRes.data ?? []).map((c: any) => ({
     id: c.id,
     name: c.name,
     phone: c.phone,
+    relationship: c.relationship ?? '',
     address: c.address,
     email: c.email,
   }));
@@ -167,7 +168,7 @@ export async function setDriverAvailability(driverId: string, isAvailable: boole
 
 export async function addEmergencyContact(
   riderId: string,
-  contact: Omit<ContactRecord, 'id'>
+  contact: Omit<EmergencyContactRecord, 'id'>
 ): Promise<{ id: string | null; error: string | null }> {
   const { data, error } = await supabase.from('emergency_contacts').insert({ rider_id: riderId, ...contact }).select('id').single();
   return { id: data?.id ?? null, error: error?.message ?? null };

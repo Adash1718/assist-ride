@@ -13,6 +13,14 @@ export type ContactRecord = {
   email: string;
 };
 
+// Emergency contacts carry a relationship ("Daughter", "Support worker"):
+// it's shown to the driver with the name so they know who answered. Medical
+// contacts deliberately do NOT have one — their table has no such column,
+// and their role is covered by specialty/hospital.
+export type EmergencyContactRecord = ContactRecord & {
+  relationship: string;
+};
+
 export type MedicalContactRecord = ContactRecord & {
   specialty: string;
   hospital: string;
@@ -29,7 +37,7 @@ export type RiderProfileData = {
   assistanceNeeds: string[];
   standingNotes: string;
   idDescription: string;
-  emergencyContacts: ContactRecord[];
+  emergencyContacts: EmergencyContactRecord[];
   medicalContacts: MedicalContactRecord[];
 };
 

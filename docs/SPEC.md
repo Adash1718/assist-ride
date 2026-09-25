@@ -105,10 +105,10 @@ the rider themselves or by a proxy on their behalf.
 | `wheelchair_foldable` | bool, only relevant if wheelchair — determines if a regular trunk works or a ramp/lift vehicle is required |
 | `communication_needs` | tags: hearing-impaired, vision-impaired, cognitive support, non-native-language, other-freeform |
 | `assistance_needs` | tags: needs door-to-door escort, needs help with transfer to seat, needs extra time, service animal, other-freeform |
-| `standing_notes` | freeform, persists across rides ("always sits in front seat") |
+| `standing_notes` | freeform, persists across rides ("always sits in front seat"). **Round 25**: now actually carried onto each ride in `needs_snapshot` and shown to the driver under "Always". It was collected from the day one form — labelled "Anything drivers should always know?" — and then never reached a driver at all, which made the question a lie. Snapshotted like every other need, so editing the profile can't rewrite what a driver was told about a past ride. |
 | `identification_aid` | set by proxy (or rider) ahead of time to help a driver who's never met the rider confirm they have the right person — e.g. photo, physical description, "will be wearing a red jacket," name to call out. Shown to driver alongside the PIN at pickup. |
-| `emergency_contacts[]` | name/phone/relationship — separate from the proxy; who to reach if something goes wrong on a ride. **Built (0020):** the matched driver can read name + phone while the ride is at `arrived` or `in_progress`, and not before or after. Address/email are never sent. Each read is logged to `emergency_contact_access`, which the rider can read and no client can write; the rider is shown when a driver opened them, during the ride and after. Proxies still cannot see these at all. |
-| `medical_contacts[]` | optional — doctor(s)/caretaker(s), name/phone/role, for context in a non-urgent situation |
+| `emergency_contacts[]` | name/phone/**relationship** (the column arrived in round 25; the spec had described it from day one) — separate from the proxy; who to reach if something goes wrong on a ride. **Built (0020):** the matched driver can read name + phone while the ride is at `arrived` or `in_progress`, and not before or after. Address/email are never sent. Each read is logged to `emergency_contact_access`, which the rider can read and no client can write; the rider is shown when a driver opened them, during the ride and after. Proxies still cannot see these at all. |
+| `medical_contacts[]` | optional — doctor(s)/caretaker(s), name/phone/specialty/hospital. **DECIDED round 25: never shown to drivers**, unlike emergency contacts. A specialty plus a hospital together disclose a diagnosis, and no rider should have to tell a stranger driving them to the shops that they see an oncologist. A driver also can't act on it: in a real emergency the answer is 911, and a doctor's office won't discuss a patient with a driver. What a driver needs is `standing_notes` and an emergency contact, both of which they now get. Visible only to the rider — not drivers, and not proxies (0017). |
 | — | **Not** a substitute for emergency services — app should surface a clear "call 911" action for actual emergencies rather than routing through these contacts |
 
 ### 2.3 Driver Profile
@@ -162,6 +162,21 @@ the rider themselves or by a proxy on their behalf.
   - **Still not built**: driver proximity. Ranking (§3.C) can't use distance
     until drivers report a location, which nothing does yet; and there is no
     live ETA for the driver's approach, only the pickup→dropoff leg.
+- **PIN lockout has an escape — round 28** (`0028_reissue_pin.sql`). Five
+  wrong entries still locks the pin, but the rider or their proxy can issue a
+  new one, which replaces the number and clears the counter. The matched
+  driver cannot: the lockout exists to stop *them* guessing, so letting them
+  reset it would remove the measure entirely. Only valid while a pin is any
+  use (`matched`/`driver_en_route`/`arrived`). This replaced a genuine dead
+  end — the old error told users to "contact support", which does not exist,
+  leaving a ride that could never start.
+- **Accessibility — round 29.** The app had no accessibility props at all,
+  which for a service aimed at vision-impaired and cognitive-support riders
+  made large parts of it unusable by its own users. Labels, roles and states
+  now live in the shared primitives; the pickup PIN is announced digit by
+  digit as one element; ride-status changes and errors are live regions.
+  Onboarding, tracking, the driver forms, contrast and dynamic type are not
+  yet audited.
 - **Pickup identity verification — DECIDED**: a PIN code shown in the
   rider/proxy app, read out to the driver, plus the rider profile's
   `identification_aid` (description/what-they're-wearing — the photo half is
@@ -353,8 +368,23 @@ Declining, going offline or picking up another ride re-ranks everyone else
 immediately — the next driver doesn't wait out the stagger. For a scheduled
 ride the clock starts at its lead window (§4), not when it was booked.
 
-Still not built: §4's radius widening, and anything that acts on the
-contradiction between a driver's assistance ratings and their capability tags.
+**Radius widening — built in round 27** (`0027_offer_radius.sql`). Before
+this there was no distance cap at all: a driver forty miles out was eligible
+from the first second, merely ranked lower, so with nobody nearer online they
+would take the ride and the rider would wait an hour for a pickup they were
+told was on its way. The radius starts at 8km, grows 8km every 45 seconds
+(the same cadence as the rank stagger, so they widen together), and stops
+filtering entirely after 5 minutes — it only ever DELAYS an offer, never
+permanently excludes anyone, because specialised drivers are scarce and a
+rider in a quiet area must still be matched. Three cases bypass it: a ride
+whose address never geocoded, a driver not sharing a position (they are
+ranked neutrally under 0024, and a filter they cannot satisfy would turn
+declining the permission into a ban on working), and any ride past the
+threshold. §3.C's eligible-driver count uses the same filter, or the matching
+screen would count drivers who aren't being offered the ride.
+
+Still not built: anything that acts on the contradiction between a driver's
+assistance ratings and their capability tags.
 
 **D. Pre-arrival briefing** — driver sees rider's needs_snapshot before
 arriving, not discovered at curbside.
@@ -438,9 +468,32 @@ approval → active.
   - The fee is **recorded on the ride** (`fee_cents`, `fee_reason`) and
     nothing charges anyone: there is no payment anywhere in this app.
 - **Driver accept/decline window**: **45 seconds** (vs. a typical rideshare's near-instant accept) — a driver here needs time to actually read the rider's `needs_snapshot` and `identification_aid` before committing, not just glance at a pickup pin. Configurable constant, not hardcoded logic.
-- **Pricing model — deferred**: fare will eventually depend on rider needs,
-  distance, and driver scarcity, but working out that formula isn't needed
-  to build the core flows. v1 shows a flat/placeholder fare estimate.
+- **Pricing model — BUILT in round 26** (`0026_fare_estimate.sql`,
+  `lib/fare.ts`), replacing the flat $19.50 placeholder. The app could already
+  tell a rider exactly what CANCELLING cost while being unable to tell them
+  what the ride cost; round 23's routing made a real estimate possible.
+  - **Rider pays**: $3.50 base + $1.75/mile + $0.20 per *routed driving
+    minute*, minimum $8. Distance is the dominant term.
+  - **The fare does NOT depend on the rider's needs, and that is a hard
+    constraint, not an omission.** An assisted ride takes longer at the kerb,
+    so any fare metering real elapsed time would charge disabled riders more
+    for the identical journey. US law is explicit about this: the ADA bars
+    passing the cost of an accommodation to the person who needs it
+    (28 CFR 36.301(c)), which is why taxi operators may not surcharge for a
+    wheelchair-accessible vehicle. The per-minute term therefore uses the
+    router's driving duration — identical for anyone travelling between those
+    two points — and kerb time is never metered.
+  - **Driver earns** the fare plus a service premium funded by the platform:
+    $2 wheelchair stow, $2 transfer assist, $1.50 door-to-door escort, capped
+    at $6, shown on the offer as "You earn". Without it a driver doing a
+    fifteen-minute transfer earns the same as a kerbside drop, and drivers
+    drift to the easy rides — which is the same discrimination arriving by a
+    different route.
+  - The estimate is **stored on the ride at booking** (like `needs_snapshot`),
+    so changing the rates later can't rewrite what a rider was quoted. A ride
+    with no route has no price and the screens say so rather than inventing
+    one. Nothing bills anyone; `fee_cents` (§4 cancellation policy) remains
+    the only money the app actually asserts.
 
 ## 5. Still open (non-blocking for a first build)
 
@@ -481,4 +534,4 @@ approval → active.
   matching logic stays simple — freeform `standing_notes` still available for
   anything the taxonomy doesn't cover.
 - Pickup verification = PIN code + `identification_aid`, shown to the driver.
-- Pricing = flat placeholder fare, real model deferred.
+- Pricing = real distance-based estimate as of round 26 (see §4); still nothing charges anyone.

@@ -98,13 +98,15 @@ export function RiderProfileForm({
       // No auth session (shouldn't happen once wired end-to-end) — keep it
       // usable locally rather than silently dropping the contact.
       const record = { id: makeId(), ...base };
-      if (contactModal === 'emergency') setRider({ emergencyContacts: [...rider.emergencyContacts, record] });
+      if (contactModal === 'emergency')
+        setRider({ emergencyContacts: [...rider.emergencyContacts, { ...record, relationship: input.relationship }] });
       else setRider({ medicalContacts: [...rider.medicalContacts, { ...record, specialty: input.specialty, hospital: input.hospital }] });
       return;
     }
     if (contactModal === 'emergency') {
-      const { id, error } = await addEmergencyContact(user.id, base);
-      setRider({ emergencyContacts: [...rider.emergencyContacts, { id: id ?? makeId(), ...base }] });
+      const emergency = { ...base, relationship: input.relationship };
+      const { id, error } = await addEmergencyContact(user.id, emergency);
+      setRider({ emergencyContacts: [...rider.emergencyContacts, { id: id ?? makeId(), ...emergency }] });
       if (error) setSaveError(error);
     } else if (contactModal === 'doctor') {
       const { id, error } = await addMedicalContact(user.id, { ...base, specialty: input.specialty, hospital: input.hospital });
@@ -273,18 +275,22 @@ export function RiderProfileForm({
             {/* Say plainly who can see these. The driver grant (migration
                 0020) is real, so the rider has to know about it before they
                 type a family member's number in. */}
+            {/* This list has to match what ride_emergency_contacts()
+                actually returns (0020, widened by 0025). If the two drift,
+                the disclosure becomes a lie — so change them together. */}
             <Hint>
-              Your driver can see a contact's name and number while you're with them — from pickup until drop-off, and not
-              after. We'll tell you if they do. Caregivers who book for you never see these.
+              Your driver can see a contact's name, relationship and number while you're with them — from pickup until
+              drop-off, and not after. Never their address or email. We'll tell you if they do. Caregivers who book for
+              you never see these.
             </Hint>
             {rider.emergencyContacts.map((c) => (
               <View key={c.id} style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
                 <Avatar initials={initialsFrom(c.name)} size={40} />
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontWeight: '700', fontSize: 15, color: colors.text }}>{c.name}</Text>
-                  <Hint>{c.phone}{c.address ? ` · ${c.address}` : ''}</Hint>
+                  <Hint>{[c.relationship, c.phone].filter(Boolean).join(' · ')}</Hint>
                 </View>
-                <IconButton onPress={() => removeEmergencyContact(c.id)}>
+                <IconButton label={`Remove emergency contact ${c.name}`} onPress={() => removeEmergencyContact(c.id)}>
                   <CloseIcon size={14} />
                 </IconButton>
               </View>
@@ -300,6 +306,19 @@ export function RiderProfileForm({
 
           <Card>
             <SectionLabel>Doctors &amp; caretakers (optional)</SectionLabel>
+            {/* Deliberately NOT shared with drivers, unlike emergency
+                contacts. A specialty and hospital together disclose a
+                diagnosis — "Oncology, Cancer Care Alliance" says more about
+                someone than they'd choose to tell a stranger driving them to
+                the shops — and a driver can't act on it anyway: in a real
+                emergency it's 911, and a doctor's office won't discuss a
+                patient with a driver. What a driver actually needs is the
+                standing note above and an emergency contact. */}
+            <Hint>
+              Only you can see these — not your driver, and not caregivers who book for you. They're here so your own
+              details are in one place. If there's something a driver should do, put it in "Anything drivers should
+              always know?" above.
+            </Hint>
             {rider.medicalContacts.map((c) => (
               <View key={c.id} style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
                 <Avatar initials={initialsFrom(c.name)} size={40} />
@@ -309,7 +328,7 @@ export function RiderProfileForm({
                     {[c.specialty, c.hospital, c.phone].filter(Boolean).join(' · ')}
                   </Hint>
                 </View>
-                <IconButton onPress={() => removeMedicalContact(c.id)}>
+                <IconButton label={`Remove ${c.name}`} onPress={() => removeMedicalContact(c.id)}>
                   <CloseIcon size={14} />
                 </IconButton>
               </View>

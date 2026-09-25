@@ -14,6 +14,7 @@ import {
   fetchCancelQuote,
   fetchMatchedDriver,
   fetchRidePin,
+  reissueRidePin,
   formatFee,
   LATE_CANCEL_FEE_CENTS,
   MatchedDriverInfo,
@@ -55,6 +56,8 @@ export default function DriverEnRoute() {
   const [quote, setQuote] = useState<CancelQuote | null>(null);
   const [now, setNow] = useState(Date.now());
   const [eta, setEta] = useState<RouteInfo | null>(null);
+  const [reissuing, setReissuing] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const leaving = useRef(false);
 
@@ -188,6 +191,19 @@ export default function DriverEnRoute() {
     router.replace({ pathname: '/(rider)/home', params: { notice: 'cancelled', fee: String(data?.feeCents ?? 0) } });
   }
 
+  async function handleNewPin() {
+    if (!rideId || reissuing) return;
+    setReissuing(true);
+    setPinError(null);
+    const { data, error: err } = await reissueRidePin(rideId);
+    setReissuing(false);
+    if (err) {
+      setPinError(err);
+      return;
+    }
+    if (data) setPin(data);
+  }
+
   const copy = (status && STATUS_COPY[status]) || STATUS_COPY.matched!;
   const riding = status === 'in_progress';
   const driverCancelled = status === 'requested';
@@ -270,7 +286,15 @@ export default function DriverEnRoute() {
               }}
             >
               <ClockIcon size={14} color={colors.text} />
-              <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>
+              {/* The one thing a rider who can't see the screen most needs:
+                  "your driver has arrived" has to ANNOUNCE itself, not sit
+                  there waiting to be found. polite, so it doesn't cut across
+                  whatever they're reading. */}
+              <Text
+                style={{ fontSize: 13, fontWeight: '700', color: colors.text }}
+                accessibilityLiveRegion="polite"
+                accessibilityRole="text"
+              >
                 {/* A real routed ETA from the driver's live position, or the
                     plain status. Never both invented — if we don't know where
                     they are, we don't claim to. */}
@@ -309,8 +333,22 @@ export default function DriverEnRoute() {
 
           {!riding && !driverCancelled && (
             <Card style={{ alignItems: 'center' }}>
-              <Text style={type.sectionLabel}>Share this PIN at pickup</Text>
-              <View style={{ flexDirection: 'row', gap: 10 }}>
+              <Text style={type.sectionLabel} accessibilityRole="header">
+                Share this PIN at pickup
+              </Text>
+              {/* Four separate boxes are four unlabelled elements to a screen
+                  reader. Announce the whole thing once, digit by digit —
+                  "5 6 4 3", not "five thousand six hundred and forty-three" —
+                  and hide the individual boxes. A rider who can't read the
+                  screen still has to be able to say this number out loud. */}
+              <View
+                style={{ flexDirection: 'row', gap: 10 }}
+                accessible
+                accessibilityRole="text"
+                accessibilityLabel={
+                  pin ? `Your pickup PIN is ${pin.split('').join(' ')}. Read it to your driver.` : 'Your pickup PIN is loading.'
+                }
+              >
                 {pinDigits.map((digit, i) => (
                   <View
                     key={i}
@@ -328,6 +366,24 @@ export default function DriverEnRoute() {
                 ))}
               </View>
               <Hint>{DriverFirstName} will confirm this before starting the ride.</Hint>
+              {/* The way out of the five-wrong-attempts lockout (0028). Kept
+                  quiet but always present: a driver mistyping at the kerb is
+                  the moment this is needed, and "contact support" used to be
+                  the only answer — for support that doesn't exist. */}
+              {pinError && (
+                <Text accessibilityLiveRegion="assertive" accessibilityRole="alert" style={{ fontSize: 13, color: colors.alertDark }}>
+                  {pinError}
+                </Text>
+              )}
+              <Text
+                onPress={handleNewPin}
+                accessibilityRole="button"
+                accessibilityLabel="Get a new PIN"
+                accessibilityHint="Use this if your driver has typed the PIN wrong too many times"
+                style={{ padding: 6, fontSize: 13, fontWeight: '700', color: colors.textSecondary }}
+              >
+                {reissuing ? 'Getting a new PIN…' : 'Driver having trouble? Get a new PIN'}
+              </Text>
             </Card>
           )}
 

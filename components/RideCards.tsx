@@ -3,7 +3,8 @@ import { Text, View } from 'react-native';
 import { colors, spacing } from '../constants/theme';
 import { Card, Hint, SectionLabel } from './ui';
 import { MapPinIcon, UsersIcon } from './Icon';
-import { fetchEmergencyAccessForRide, RideRequestData } from '../lib/rideApi';
+import { fetchEmergencyAccessForRide, formatFee, RideRequestData } from '../lib/rideApi';
+import { driverEarningsCents } from '../lib/fare';
 import { formatDistance, formatDuration } from '../lib/geoApi';
 
 // What a driver needs to know about a ride, shared by the incoming-request
@@ -49,6 +50,15 @@ export function RiderNeedsCard({ ride }: { ride: RideRequestData }) {
       {(ride.needsSnapshot.assistanceNeeds ?? []).includes('Service animal') && (
         <Hint>The rider is travelling with a service animal, which can't be refused.</Hint>
       )}
+      {/* The rider's standing note. Their profile asks for this under
+          "Anything drivers should always know?", so not showing it here made
+          that question a lie — it was collected and never delivered. */}
+      {ride.needsSnapshot.standingNotes?.trim() ? (
+        <View style={{ gap: 4 }}>
+          <Text style={{ fontSize: 12, fontWeight: '700', color: colors.accentDark, letterSpacing: 0.3 }}>ALWAYS</Text>
+          <Text style={{ fontSize: 14, color: colors.text, lineHeight: 20 }}>{ride.needsSnapshot.standingNotes}</Text>
+        </View>
+      ) : null}
     </Card>
   );
 }
@@ -91,6 +101,27 @@ export function TripCard({ ride }: { ride: RideRequestData }) {
         <Hint>
           About {formatDistance(ride.routeMeters)} · {formatDuration(ride.routeSeconds)} driving
         </Hint>
+      )}
+      {/* What this ride pays the driver, on the offer screen where they
+          decide. The service premium is funded by the platform, never added
+          to the rider's fare (lib/fare.ts) — a driver spending fifteen
+          minutes on a transfer shouldn't earn the same as a kerbside drop,
+          and the rider shouldn't be charged for needing the help. */}
+      {ride.fareEstimateCents != null && (
+        <>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>You earn</Text>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>
+              {formatFee(driverEarningsCents(ride.fareEstimateCents, ride.driverPremiumCents ?? 0))}
+            </Text>
+          </View>
+          {(ride.driverPremiumCents ?? 0) > 0 && (
+            <Hint>
+              Includes {formatFee(ride.driverPremiumCents ?? 0)} for the assistance this ride needs — paid by us, not by
+              the rider.
+            </Hint>
+          )}
+        </>
       )}
       {ride.rideNotes?.trim() ? <Hint>"{ride.rideNotes}"</Hint> : null}
     </Card>
