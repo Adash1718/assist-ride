@@ -315,10 +315,17 @@ export default function DriverEnRoute() {
               </View>
               <Hint>{vehicleLine}</Hint>
               {driverTags.length > 0 && (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                  {driverTags.map((tag) => (
-                    <Chip key={tag} label={tag} />
-                  ))}
+                <View style={{ gap: 6 }}>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                    {driverTags.map((tag) => (
+                      <Chip key={tag} label={tag} />
+                    ))}
+                  </View>
+                  {/* These are the driver's own answers, not something the app
+                      checked. Presenting them bare read as verification, which
+                      matters most to exactly the riders trusting them — say
+                      what they are. */}
+                  <Hint>{DriverFirstName} told us these about themselves. We don't verify them.</Hint>
                 </View>
               )}
               {/* Messaging rather than a phone button: no number is exchanged

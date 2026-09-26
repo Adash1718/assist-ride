@@ -132,6 +132,24 @@ the app by phase/role rather than by feature:
   transaction back, which silently undid the attempt counter and made the
   lockout a no-op. Anything that must persist alongside a rejection has the
   same problem.
+- **A `finally` that calls `process.exit` will swallow crashes.** Every suite
+  did this: an exception mid-run printed a tidy "N passed, 0 failed" and
+  exited 0, so an aborted run was indistinguishable from a clean one. Found
+  when a suite reported "1 passed, 0 failed" while actually dying on its
+  second step. All suites now catch, print `CRASHED:`, mark the summary
+  "RUN ABORTED" and exit non-zero. Any new suite must do the same — a harness
+  that reports success on a crash is worse than no harness.
+- **Don't assert on ambient state another suite happens to create.**
+  `rank-test` assumed "d1 has the better rating (from the feedback tests)".
+  Once other suites started leaving ratings, the order inverted and it failed
+  for reasons unrelated to ranking. It now READS both aggregates and asserts
+  the property ("the better-rated one wins", whoever that is).
+- **A test that permanently damages shared state is not a test.** The
+  contradiction suite put six real 1-star ratings on the shared driver2
+  account, which suppressed a capability for 60 days — and feedback is
+  immutable, so undoing it needed a migration. It now signs up a THROWAWAY
+  driver per run. Anything writing immutable or reputational data must not
+  use the shared accounts.
 - **This app is FOR people who use screen readers, so accessibility props are
   load-bearing, not polish.** Round 29 added them at the primitives in
   `components/ui.tsx` (every `IconButton` takes a `label`; `SectionLabel` and

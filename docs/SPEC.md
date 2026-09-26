@@ -219,8 +219,16 @@ the rider themselves or by a proxy on their behalf.
   holding the three specific ratings, the overall rating and an optional
   comment. Written only by the ride's requester, only once it's `completed`,
   and only against the ride's actual matched driver. There are no UPDATE or
-  DELETE policies: feedback is immutable once sent, and the completion screen
-  says so before you send it.
+  DELETE policies. **Round 31 narrowed this**: the rider who wrote a rating
+  may correct it for 24 hours (`edited_at` records that they did), after which
+  it is fixed. Immutability was right when a rating only moved an average;
+  since round 29 it can stop a driver being matched for a class of ride, and a
+  mistaken tap needed a way back — there is no support to appeal to. A trigger
+  pins ride/rider/driver/created_at, because RLS cannot restrict which columns
+  an UPDATE touches. Still no DELETE: a rating can be improved, never
+  vanished. What keeps this from becoming a pressure vector is that drivers
+  cannot read individual feedback at all (only their own aggregate), so they
+  have no way to know who rated them what.
 - **Drivers cannot read individual feedback.** A comment on a ride a driver
   just finished would identify the rider who left it. Drivers get only their
   own aggregate, via `my_driver_rating()` — a `SECURITY DEFINER` function that
@@ -383,8 +391,30 @@ declining the permission into a ban on working), and any ride past the
 threshold. §3.C's eligible-driver count uses the same filter, or the matching
 screen would count drivers who aren't being offered the ride.
 
-Still not built: anything that acts on the contradiction between a driver's
-assistance ratings and their capability tags.
+**Contradicted capabilities — built in rounds 29/30** (`0029`, `0030`).
+Capability tags are self-declared and nothing checks them, which matters here
+because a false claim routes that driver to exactly the riders who cannot
+manage without it. A tag stops being used for matching when the riders who
+NEEDED it say it isn't there: six or more such rides, averaging under 2.5 of
+5, counted only on rides whose needs_snapshot actually called for the
+capability (a mobility rating from a trip with no mobility aid is no evidence
+about stowing a wheelchair). `ramp_equipped` is exempt — it's a fact about a
+vehicle, not a skill.
+
+The first version was a **permanent ban** and the test caught it: a suppressed
+driver can no longer be matched to rides needing the capability, so they can
+never earn the ratings that would clear it — the "rolling window of the last
+20 rides" never rolls. Evidence now ages out after 60 days, so a suppression
+lifts by itself and re-applies within six rides if the problem is real.
+
+The driver is always told what was paused and why (`driver_contradicted_tags`,
+shown on Driver Home). Riders are not told anything about a specific driver —
+the suppression simply stops the match happening.
+
+**Known gap this creates**: there is no correction path for feedback anywhere
+in the app (§2.6 makes it immutable). A driver mis-rated by mistake now loses
+work over it, where before it only moved an average. Undoing the test data
+that proved this took a migration.
 
 **D. Pre-arrival briefing** — driver sees rider's needs_snapshot before
 arriving, not discovered at curbside.

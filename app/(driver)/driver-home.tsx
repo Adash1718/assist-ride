@@ -3,13 +3,13 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, type } from '../../constants/theme';
-import { Avatar, Card, Hint, IconButton, PrimaryButton, Screen, TopBar } from '../../components/ui';
+import { Avatar, Card, Hint, IconButton, PrimaryButton, Screen, SectionLabel, TopBar } from '../../components/ui';
 import { LogOutIcon, PencilIcon } from '../../components/Icon';
 import { useProfiles } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { initialsFrom } from '../../lib/format';
 import { ensureDriverProfileRow, fetchDriverProfile, isDriverProfileComplete, setDriverAvailability } from '../../lib/profileApi';
-import { DriverRating, fetchMyDriverRating } from '../../lib/feedbackApi';
+import { ContradictedTag, DriverRating, fetchContradictedTags, fetchMyDriverRating } from '../../lib/feedbackApi';
 import { fetchActiveRideForDriver, fetchOldestOpenRequest, subscribeToIncomingRequests } from '../../lib/rideApi';
 import { clearDriverLocation, LocationSharing, startSharingLocation } from '../../lib/locationApi';
 
@@ -41,6 +41,9 @@ export default function DriverHome() {
   // This driver's own rating (0014). Only their aggregate is readable —
   // individual ratings and comments would identify the rider who left them.
   const [rating, setRating] = useState<DriverRating | null>(null);
+  // Capabilities the ratings contradict (0029). Shown, never hidden — a
+  // driver quietly stopped from getting certain rides can't improve or argue.
+  const [contradicted, setContradicted] = useState<ContradictedTag[]>([]);
 
   const userId = session?.user?.id;
 
@@ -49,6 +52,8 @@ export default function DriverHome() {
     (async () => {
       const { data } = await fetchMyDriverRating();
       if (data) setRating(data);
+      const { data: flagged } = await fetchContradictedTags();
+      setContradicted(flagged);
     })();
   }, [userId]);
 
@@ -220,6 +225,22 @@ export default function DriverHome() {
               <PencilIcon size={16} />
             </IconButton>
           </Card>
+
+          {contradicted.length > 0 && (
+            <Card style={{ backgroundColor: colors.alertSoft, borderColor: colors.alert }}>
+              <SectionLabel>Some ride types are paused for you</SectionLabel>
+              {contradicted.map((c) => (
+                <Hint key={c.tag}>
+                  You listed "{c.tag}", but riders who needed it rated that help {c.average} out of 5 across {c.rides}{' '}
+                  rides, so we're not matching you to those rides for now.
+                </Hint>
+              ))}
+              <Hint>
+                This isn't permanent — ratings older than two months stop counting, and you'll be matched again. Everything
+                else you're set up for is unaffected.
+              </Hint>
+            </Card>
+          )}
 
           {/* Mid-ride, the availability toggle is beside the point — this
               driver isn't being offered anything until the ride ends. Show

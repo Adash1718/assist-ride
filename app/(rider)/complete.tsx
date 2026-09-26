@@ -3,13 +3,20 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing } from '../../constants/theme';
-import { Card, Divider, Hint, PrimaryButton, Screen, SectionLabel } from '../../components/ui';
+import { Card, Divider, Hint, PrimaryButton, Screen, SecondaryButton, SectionLabel } from '../../components/ui';
 import { CheckIcon, StarIcon } from '../../components/Icon';
 import { EmergencyAccessNotice } from '../../components/RideCards';
 import { useProfiles } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { fetchRideRequest, formatFee, RideRequestData } from '../../lib/rideApi';
-import { fetchRideFeedback, RideFeedback, submitRideFeedback } from '../../lib/feedbackApi';
+import {
+  correctRideFeedback,
+  FEEDBACK_EDIT_WINDOW_HOURS,
+  feedbackStillEditable,
+  fetchRideFeedback,
+  RideFeedback,
+  submitRideFeedback,
+} from '../../lib/feedbackApi';
 import { formatDistance, formatDuration } from '../../lib/geoApi';
 
 function StarRow({
@@ -57,6 +64,9 @@ export default function RideComplete() {
   const [vehicleRating, setVehicleRating] = useState(5);
   const [overall, setOverall] = useState(5);
   const [comment, setComment] = useState('');
+  // Correcting something already sent (0031). Ratings can now stop a driver
+  // being matched for a kind of ride, so a mistaken tap needs a way back.
+  const [editing, setEditing] = useState(false);
 
   useEffect(() => {
     if (!rideId) return;
@@ -72,6 +82,38 @@ export default function RideComplete() {
       cancelled = true;
     };
   }, [rideId]);
+
+  function startEditing() {
+    if (!existing) return;
+    setMobilityRating(existing.mobilityRating);
+    setPatienceRating(existing.patienceRating);
+    setVehicleRating(existing.vehicleRating);
+    setOverall(existing.overallRating);
+    setComment(existing.comment);
+    setError(null);
+    setEditing(true);
+  }
+
+  async function handleCorrect() {
+    if (!rideId) return;
+    setSubmitting(true);
+    setError(null);
+    const { data, error: err } = await correctRideFeedback({
+      rideId,
+      mobilityRating,
+      patienceRating,
+      vehicleRating,
+      overallRating: overall,
+      comment,
+    });
+    setSubmitting(false);
+    if (err || !data) {
+      setError(err ?? 'Something went wrong. Please try again.');
+      return;
+    }
+    setExisting(data);
+    setEditing(false);
+  }
 
   async function handleSubmit() {
     if (!rideId || !user || !ride?.matchedDriverId) return;
@@ -142,7 +184,7 @@ export default function RideComplete() {
             )}
           </Card>
 
-          {existing ? (
+          {existing && !editing ? (
             <Card>
               <SectionLabel>Your feedback</SectionLabel>
               <Hint>Thanks — this is what you sent the team about this ride.</Hint>
@@ -159,6 +201,17 @@ export default function RideComplete() {
               </View>
 
               {existing.comment.trim() !== '' && <Hint>"{existing.comment}"</Hint>}
+              {feedbackStillEditable(existing) ? (
+                <>
+                  <Hint>
+                    Tapped the wrong star? You can change this for {FEEDBACK_EDIT_WINDOW_HOURS} hours. Your driver never
+                    sees who rated them.
+                  </Hint>
+                  <SecondaryButton label="Change my feedback" onPress={startEditing} />
+                </>
+              ) : (
+                <Hint>This can no longer be changed — it was sent more than {FEEDBACK_EDIT_WINDOW_HOURS} hours ago.</Hint>
+              )}
             </Card>
           ) : (
             <Card>
@@ -195,11 +248,14 @@ export default function RideComplete() {
                   color: colors.text,
                 }}
               />
-              <Hint>Feedback is sent once and can't be edited afterwards.</Hint>
+              <Hint>
+                You can change this for {FEEDBACK_EDIT_WINDOW_HOURS} hours after sending, then it's fixed. It's never
+                shown to your driver individually.
+              </Hint>
             </Card>
           )}
 
-          {existing && (
+          {existing && !editing && (
             <Pressable onPress={() => router.push({ pathname: '/(rider)/tracking', params: { rideId } })} style={{ alignSelf: 'flex-start' }}>
               <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary }}>View ride timeline</Text>
             </Pressable>
@@ -217,7 +273,7 @@ export default function RideComplete() {
           }}
         >
           {error && <Hint>{error}</Hint>}
-          {existing ? (
+          {existing && !editing ? (
             <PrimaryButton label="Done" onPress={() => router.replace('/(rider)/home')} />
           ) : (
             <>

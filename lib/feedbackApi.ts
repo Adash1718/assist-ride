@@ -76,6 +76,46 @@ export async function submitRideFeedback(params: {
   return { data: mapRow(data), error: null };
 }
 
+// How long a rider may correct what they sent (migration 0031). Mirrors the
+// interval in the UPDATE policy — the database decides, this is for wording.
+export const FEEDBACK_EDIT_WINDOW_HOURS = 24;
+
+export function feedbackStillEditable(feedback: RideFeedback, now: number = Date.now()): boolean {
+  const sent = new Date(feedback.createdAt).getTime();
+  return Number.isFinite(sent) && now - sent < FEEDBACK_EDIT_WINDOW_HOURS * 3600_000;
+}
+
+// Correct a rating already sent. Only the rider who wrote it, only inside the
+// window, and only the ratings and comment — the row's identity is pinned by
+// a trigger (0031), since RLS can't restrict columns.
+export async function correctRideFeedback(params: {
+  rideId: string;
+  mobilityRating: number;
+  patienceRating: number;
+  vehicleRating: number;
+  overallRating: number;
+  comment: string;
+}): Promise<{ data: RideFeedback | null; error: string | null }> {
+  const { data, error } = await supabase
+    .from('ride_feedback')
+    .update({
+      mobility_rating: params.mobilityRating,
+      patience_rating: params.patienceRating,
+      vehicle_rating: params.vehicleRating,
+      overall_rating: params.overallRating,
+      comment: params.comment.trim(),
+    })
+    .eq('ride_id', params.rideId)
+    .select('*')
+    .maybeSingle();
+  if (error?.code === '42501') return { data: null, error: 'Only the ratings and comment can be changed.' };
+  if (error) return { data: null, error: error.message };
+  // Zero rows means the policy declined it — almost always the window closing
+  // between the screen rendering and the tap.
+  if (!data) return { data: null, error: `Ratings can only be changed within ${FEEDBACK_EDIT_WINDOW_HOURS} hours of sending them.` };
+  return { data: mapRow(data), error: null };
+}
+
 // The signed-in driver's own rating. No argument, so a driver can't ask
 // about anyone else (migration 0014). count 0 means no feedback yet, and the
 // averages come back null rather than 0.
@@ -91,6 +131,28 @@ export async function fetchMyDriverRating(): Promise<{ data: DriverRating | null
       patience: row.patience === null || row.patience === undefined ? null : Number(row.patience),
       vehicle: row.vehicle === null || row.vehicle === undefined ? null : Number(row.vehicle),
     },
+    error: null,
+  };
+}
+
+export type ContradictedTag = { tag: string; rides: number; average: number };
+
+// Capabilities this driver declared that their riders' ratings contradict
+// (0029/0030) — which means they are no longer being matched on them. Their
+// own record only; nobody can look this up about anyone else.
+//
+// This exists so the suppression is never silent. A driver whose work quietly
+// dries up with no explanation has no way to improve, contest it, or even
+// know it happened.
+export async function fetchContradictedTags(): Promise<{ data: ContradictedTag[]; error: string | null }> {
+  const { data, error } = await supabase.rpc('driver_contradicted_tags');
+  if (error) return { data: [], error: error.message };
+  return {
+    data: (Array.isArray(data) ? data : []).map((t: any) => ({
+      tag: String(t.tag),
+      rides: Number(t.rides ?? 0),
+      average: Number(t.average ?? 0),
+    })),
     error: null,
   };
 }
