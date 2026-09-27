@@ -3,7 +3,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing } from '../../constants/theme';
-import { Card, Divider, Hint, PrimaryButton, Screen, SecondaryButton, SectionLabel } from '../../components/ui';
+import { Card, Chip, Divider, Hint, PrimaryButton, Screen, SecondaryButton, SectionLabel } from '../../components/ui';
 import { CheckIcon, StarIcon } from '../../components/Icon';
 import { EmergencyAccessNotice } from '../../components/RideCards';
 import { useProfiles } from '../../contexts/ProfileContext';
@@ -18,6 +18,7 @@ import {
   submitRideFeedback,
 } from '../../lib/feedbackApi';
 import { formatDistance, formatDuration } from '../../lib/geoApi';
+import { INCIDENT_CATEGORIES, IncidentCategory, reportIncident } from '../../lib/incidentApi';
 
 function StarRow({
   value,
@@ -67,6 +68,35 @@ export default function RideComplete() {
   // Correcting something already sent (0031). Ratings can now stop a driver
   // being matched for a kind of ride, so a mistaken tap needs a way back.
   const [editing, setEditing] = useState(false);
+  // Reporting something that went wrong (0032). Separate from the star
+  // ratings on purpose: "rough handling" is not a number out of five, and a
+  // rider shouldn't have to encode it as one.
+  const [reporting, setReporting] = useState(false);
+  const [reportCategory, setReportCategory] = useState<IncidentCategory | null>(null);
+  const [reportDetails, setReportDetails] = useState('');
+  const [reported, setReported] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  async function handleReport() {
+    if (!rideId || !user || !ride?.matchedDriverId || !ride?.riderId || !reportCategory) return;
+    setSubmitting(true);
+    setReportError(null);
+    const { error: err } = await reportIncident({
+      rideId,
+      riderId: ride.riderId,
+      driverId: ride.matchedDriverId,
+      reportedBy: user.id,
+      category: reportCategory,
+      details: reportDetails,
+    });
+    setSubmitting(false);
+    if (err) {
+      setReportError(err);
+      return;
+    }
+    setReported(true);
+    setReporting(false);
+  }
 
   useEffect(() => {
     if (!rideId) return;
@@ -163,6 +193,19 @@ export default function RideComplete() {
           </View>
 
           {rideId && <EmergencyAccessNotice rideId={rideId} />}
+
+          {reported && (
+            <Card style={{ backgroundColor: colors.positiveSoft, borderColor: colors.positive }}>
+              <SectionLabel>Report sent</SectionLabel>
+              {/* Says exactly what happens, and nothing more. There is no
+                  support desk behind this — promising a review nobody will do
+                  is the empty promise this app has had to remove elsewhere. */}
+              <Hint>
+                This driver won't be matched with you again. Your report is kept on record, and they're never told who
+                reported them.
+              </Hint>
+            </Card>
+          )}
 
           <Card>
             <TripRow k="Pickup" v={ride?.pickup ?? '—'} />
@@ -261,6 +304,68 @@ export default function RideComplete() {
             </Pressable>
           )}
         </ScrollView>
+
+          {!reported && ride?.matchedDriverId && (
+            <Card>
+              <SectionLabel>Did something go wrong?</SectionLabel>
+              {reporting ? (
+                <>
+                  <Hint>What happened? This is separate from the star ratings.</Hint>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                    {INCIDENT_CATEGORIES.map((c) => (
+                      <Chip
+                        key={c.key}
+                        label={c.label}
+                        selected={reportCategory === c.key}
+                        onPress={() => setReportCategory(c.key)}
+                      />
+                    ))}
+                  </View>
+                  <TextInput
+                    value={reportDetails}
+                    onChangeText={setReportDetails}
+                    placeholder="Anything you want to add (optional)"
+                    placeholderTextColor={colors.textTertiary}
+                    accessibilityLabel="What happened"
+                    multiline
+                    style={{
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      borderRadius: 12,
+                      padding: 14,
+                      fontSize: 15,
+                      minHeight: 56,
+                      color: colors.text,
+                    }}
+                  />
+                  <Hint>
+                    Sending this stops {riderFirstName === 'The rider' ? 'this rider' : 'you'} being matched with this
+                    driver again. It can't be undone, and they're never told who reported them.
+                  </Hint>
+                  {reportError && (
+                    <Text accessibilityLiveRegion="assertive" accessibilityRole="alert" style={{ fontSize: 13, color: colors.alertDark }}>
+                      {reportError}
+                    </Text>
+                  )}
+                  <View style={{ flexDirection: 'row', gap: 12 }}>
+                    <SecondaryButton label="Cancel" onPress={() => setReporting(false)} />
+                    <View style={{ flex: 1 }}>
+                      <PrimaryButton
+                        label={submitting ? 'Sending…' : 'Send report'}
+                        onPress={handleReport}
+                        disabled={submitting || !reportCategory}
+                      />
+                    </View>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Hint>If you're in danger, call 911. Otherwise you can report this ride to us.</Hint>
+                  <SecondaryButton label="Report a problem" onPress={() => setReporting(true)} />
+                </>
+              )}
+            </Card>
+          )}
 
         <View
           style={{

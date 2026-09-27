@@ -164,6 +164,11 @@ the app by phase/role rather than by feature:
   tries left" is useless if it only appears on screen.
   Still unaudited: onboarding, tracking, driver profile forms, contrast and
   dynamic type.
+- **A flapping check is worse than a missing one.** `message-test`'s Realtime
+  assertion waited a flat 3s: it passed alone and failed under the load of a
+  full sweep, which trains you to shrug at red. It now polls for the
+  condition with a 15s ceiling. Wait on the state you care about, not a
+  guessed delay.
 - **Never promise support that doesn't exist.** "Contact support" appeared in
   four places with no support behind it anywhere; the worst was the PIN
   lockout, which permanently bricked a ride at the kerb. 0028 gives the RIDER

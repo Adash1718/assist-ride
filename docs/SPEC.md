@@ -209,6 +209,31 @@ the rider themselves or by a proxy on their behalf.
   policies (messages are a record, like §2.6 feedback), and sending stops
   when the ride ends while reading stays open for both sides.
 
+### 2.5c Incident Reports
+- **Built in round 32** (`0032_ride_incidents.sql`). Star ratings were the
+  only channel for anything going wrong, and "rough handling" or "left me
+  stranded" is not a number out of five — a bad answer for a service whose
+  riders are disproportionately exposed to exactly those things.
+- **What a report does, and all it claims to do**: the reported driver is
+  never matched to that rider again (enforced in the drivers' SELECT policy,
+  not as a client preference), and the report is kept as a record. There is
+  no support desk in this app, so it does NOT say "we'll review this" —
+  promising a review nobody will perform is the same empty promise as the
+  "contact support" that stranded riders until round 28.
+- The driver is never told who reported them and cannot read reports at all
+  (no SELECT policy grants it). A rider who fears the journey home being
+  worse for having complained will not complain, and that silence is the
+  failure mode that matters here.
+- Categories are specific to assisted transport: unsafe driving, rough or
+  unsafe physical help, rude or dismissive, left stranded, assistance
+  refused, other.
+- No UPDATE or DELETE: a report is a record of what someone said happened,
+  and a withdrawable one could be pressured out of someone.
+- **Deliberately NOT built**: automatic suspension after N reports. Removing
+  a driver's livelihood on unreviewed accusations needs a human, and
+  inventing a fake review process would be worse than admitting there isn't
+  one.
+
 ### 2.6 Post-ride Feedback
 - Separate from a generic star rating: a specific "how was the assistance
   experience" rating/comment, tied to the driver's `assistance_capability_tags`
