@@ -175,8 +175,13 @@ the rider themselves or by a proxy on their behalf.
   made large parts of it unusable by its own users. Labels, roles and states
   now live in the shared primitives; the pickup PIN is announced digit by
   digit as one element; ride-status changes and errors are live regions.
-  Onboarding, tracking, the driver forms, contrast and dynamic type are not
-  yet audited.
+  **Round 33** finished it: every text input is labelled, steppers name what
+  they count, touch targets meet 44px, and the palette was re-derived against
+  WCAG AA — six pairs failed, including white-on-accent at 3.07:1 (every
+  primary button) and input outlines at 1.36:1. `docs/contrast-check.mjs`
+  measures this and should be re-run after any palette change. Outstanding:
+  no testing with a real screen reader, and single-choice chips announce as
+  checkboxes rather than radios.
 - **Pickup identity verification — DECIDED**: a PIN code shown in the
   rider/proxy app, read out to the driver, plus the rider profile's
   `identification_aid` (description/what-they're-wearing — the photo half is

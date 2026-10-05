@@ -265,6 +265,11 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   chip: {
+    // 10px padding around 13px text lands at ~38px — under the 44px minimum
+    // touch target. These are the controls a rider taps to describe their own
+    // needs, and small targets are hardest on exactly the people using them.
+    minHeight: 44,
+    justifyContent: 'center' as const,
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: radii.pill,
@@ -290,7 +295,7 @@ const styles = StyleSheet.create({
     padding: 4,
     gap: 4,
   },
-  segment: { flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: radii.md - 3 },
+  segment: { flex: 1, alignItems: 'center', justifyContent: 'center' as const, minHeight: 44, paddingVertical: 10, borderRadius: radii.md - 3 },
   segmentActive: { backgroundColor: colors.surface },
   segmentText: { fontSize: 15, fontWeight: '700', color: colors.textSecondary },
   stepBtn: {

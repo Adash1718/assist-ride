@@ -52,6 +52,10 @@ function labeledInput(
         placeholder={placeholder}
         placeholderTextColor={colors.textTertiary}
         keyboardType={keyboardType}
+        // The visible <Text> above is not associated with this field for a
+        // screen reader, so without this the input announces as an unlabelled
+        // edit box. The error is folded in so it's heard, not just seen.
+        accessibilityLabel={errorText ? `${label}. ${errorText}` : label}
         style={{
           borderWidth: 1,
           borderColor: errorText ? colors.alert : colors.border,
@@ -234,11 +238,12 @@ export function RiderProfileForm({
               value={rider.standingNotes}
               onChangeText={(v) => setRider({ standingNotes: v })}
               placeholder="e.g. Always sits in the front seat"
+              accessibilityLabel="Anything drivers should always know"
               placeholderTextColor={colors.textTertiary}
               multiline
               style={{
                 borderWidth: 1,
-                borderColor: colors.border,
+                borderColor: colors.borderStrong,
                 borderRadius: 12,
                 padding: 14,
                 fontSize: 16,
@@ -256,11 +261,12 @@ export function RiderProfileForm({
               value={rider.idDescription}
               onChangeText={(v) => setRider({ idDescription: v })}
               placeholder="e.g. Usually wears a blue cardigan"
+              accessibilityLabel="What you'll look like or be wearing"
               placeholderTextColor={colors.textTertiary}
               multiline
               style={{
                 borderWidth: 1,
-                borderColor: colors.border,
+                borderColor: colors.borderStrong,
                 borderRadius: 12,
                 padding: 14,
                 fontSize: 16,

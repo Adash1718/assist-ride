@@ -82,10 +82,11 @@ export default function SignUp() {
             value={email}
             onChangeText={setEmail}
             placeholder="you@example.com"
+            accessibilityLabel="Email address"
             placeholderTextColor={colors.textTertiary}
             autoCapitalize="none"
             keyboardType="email-address"
-            style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 14, fontSize: 16, color: colors.text }}
+            style={{ borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 12, padding: 14, fontSize: 16, color: colors.text }}
           />
 
           <Text style={type.label}>Password</Text>
@@ -93,9 +94,10 @@ export default function SignUp() {
             value={password}
             onChangeText={setPassword}
             placeholder="At least 6 characters"
+            accessibilityLabel="Password, at least 6 characters"
             placeholderTextColor={colors.textTertiary}
             secureTextEntry
-            style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 14, fontSize: 16, color: colors.text }}
+            style={{ borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 12, padding: 14, fontSize: 16, color: colors.text }}
           />
 
           <Text style={type.label}>Confirm password</Text>
@@ -103,6 +105,7 @@ export default function SignUp() {
             value={confirmPassword}
             onChangeText={setConfirmPassword}
             placeholder="Re-enter password"
+            accessibilityLabel="Re-enter password"
             placeholderTextColor={colors.textTertiary}
             secureTextEntry
             style={{

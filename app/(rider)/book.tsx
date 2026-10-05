@@ -228,7 +228,7 @@ export default function BookRide() {
                   alignItems: 'center',
                   gap: 12,
                   borderWidth: 1,
-                  borderColor: colors.border,
+                  borderColor: colors.borderStrong,
                   borderRadius: 12,
                   padding: 14,
                 }}
@@ -246,7 +246,7 @@ export default function BookRide() {
                   alignItems: 'center',
                   gap: 12,
                   borderWidth: 1,
-                  borderColor: colors.border,
+                  borderColor: colors.borderStrong,
                   borderRadius: 12,
                   padding: 14,
                   opacity: scheduledDate ? 1 : 0.5,
@@ -289,7 +289,7 @@ export default function BookRide() {
                 alignItems: 'center',
                 gap: 12,
                 borderWidth: 1,
-                borderColor: colors.border,
+                borderColor: colors.borderStrong,
                 borderRadius: 12,
                 padding: 14,
               }}
@@ -297,6 +297,7 @@ export default function BookRide() {
               <MapPinIcon size={18} color={colors.textTertiary} />
               <TextInput
                 value={pickup}
+                accessibilityLabel="Pickup address"
                 onChangeText={(t) => {
                   setPickup(t);
                   setPickupPoint(null);
@@ -313,7 +314,7 @@ export default function BookRide() {
                 alignItems: 'center',
                 gap: 12,
                 borderWidth: 1,
-                borderColor: colors.border,
+                borderColor: colors.borderStrong,
                 borderRadius: 12,
                 padding: 14,
               }}
@@ -321,6 +322,7 @@ export default function BookRide() {
               <MapPinIcon size={18} color={colors.textTertiary} />
               <TextInput
                 value={dropoff}
+                accessibilityLabel="Dropoff address"
                 onChangeText={(t) => {
                   setDropoff(t);
                   setDropoffPoint(null);
@@ -338,7 +340,7 @@ export default function BookRide() {
                 <Text style={type.label}>Riding along with {riderName}?</Text>
                 <Hint>Companions, not requiring assistance</Hint>
               </View>
-              <Stepper value={companions} onChange={setCompanions} />
+              <Stepper value={companions} onChange={setCompanions} label="companions riding along" />
             </View>
           </Card>
 
@@ -348,11 +350,12 @@ export default function BookRide() {
               value={notes}
               onChangeText={setNotes}
               placeholder="e.g. bringing a folding walker today"
+              accessibilityLabel="Anything specific for this trip (optional)"
               placeholderTextColor={colors.textTertiary}
               multiline
               style={{
                 borderWidth: 1,
-                borderColor: colors.border,
+                borderColor: colors.borderStrong,
                 borderRadius: 12,
                 padding: 14,
                 fontSize: 16,

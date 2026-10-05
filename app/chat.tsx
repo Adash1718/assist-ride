@@ -123,11 +123,12 @@ export default function RideChat() {
                   value={draft}
                   onChangeText={(t) => setDraft(t.slice(0, MESSAGE_MAX_LENGTH))}
                   placeholder="Type a message"
+                  accessibilityLabel="Message"
                   placeholderTextColor={colors.textTertiary}
                   multiline
                   style={{
                     borderWidth: 1,
-                    borderColor: colors.border,
+                    borderColor: colors.borderStrong,
                     borderRadius: 12,
                     padding: 14,
                     fontSize: 15,

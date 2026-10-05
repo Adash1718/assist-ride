@@ -176,12 +176,13 @@ export default function People() {
               value={email}
               onChangeText={setEmail}
               placeholder="their@email.com"
+              accessibilityLabel="Email address of the person who can book for you"
               placeholderTextColor={colors.textTertiary}
               autoCapitalize="none"
               keyboardType="email-address"
               style={{
                 borderWidth: 1,
-                borderColor: colors.border,
+                borderColor: colors.borderStrong,
                 borderRadius: 12,
                 padding: 14,
                 fontSize: 15,

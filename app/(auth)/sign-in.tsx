@@ -73,10 +73,11 @@ export default function SignIn() {
             value={email}
             onChangeText={setEmail}
             placeholder="you@example.com"
+            accessibilityLabel="Email address"
             placeholderTextColor={colors.textTertiary}
             autoCapitalize="none"
             keyboardType="email-address"
-            style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 14, fontSize: 16, color: colors.text }}
+            style={{ borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 12, padding: 14, fontSize: 16, color: colors.text }}
           />
 
           <Text style={type.label}>Password</Text>
@@ -84,9 +85,10 @@ export default function SignIn() {
             value={password}
             onChangeText={setPassword}
             placeholder="Password"
+            accessibilityLabel="Password"
             placeholderTextColor={colors.textTertiary}
             secureTextEntry
-            style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 14, fontSize: 16, color: colors.text }}
+            style={{ borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 12, padding: 14, fontSize: 16, color: colors.text }}
           />
 
           {error && <Text style={{ fontSize: 13, color: colors.alertDark }}>{error}</Text>}

@@ -162,8 +162,22 @@ the app by phase/role rather than by feature:
   PIN aloud; and anything that CHANGES while you're looking at it needs a live
   region — ride status is `polite`, errors are `assertive` alerts, since "3
   tries left" is useless if it only appears on screen.
-  Still unaudited: onboarding, tracking, driver profile forms, contrast and
-  dynamic type.
+  **Round 33 finished the pass**: every `TextInput` in the app now carries an
+  `accessibilityLabel` (a visible `<Text>` above a field is not associated
+  with it for a screen reader — the field announced as a bare edit box), the
+  steppers name what they count, and chips/segments were raised to a 44px
+  minimum touch target from ~38px.
+  **Contrast is measured, not eyeballed**: `docs/contrast-check.mjs` computes
+  WCAG ratios for every pair the app renders. Six failed, including white
+  text on the primary button (3.07:1 — every CTA in the app) and input
+  outlines at 1.36:1. The palette was darkened by the smallest amount that
+  passes, hue kept; `borderStrong` now marks control boundaries as distinct
+  from decorative card edges. Re-run that script after ANY palette change —
+  a tweak that looks nicer and drops below 4.5:1 is a regression for the
+  people this app is for.
+  Still not done: never tested with a real screen reader (the accessibility
+  tree proves elements are named, not that the experience is good), and the
+  mobility-aid chips announce as checkboxes though only one can be chosen.
 - **A flapping check is worse than a missing one.** `message-test`'s Realtime
   assertion waited a flat 3s: it passed alone and failed under the load of a
   full sweep, which trains you to shrug at red. It now polls for the

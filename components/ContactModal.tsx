@@ -30,9 +30,10 @@ function Field({
         placeholderTextColor={colors.textTertiary}
         keyboardType={keyboardType}
         autoCapitalize={keyboardType === 'email-address' ? 'none' : 'words'}
+        accessibilityLabel={label}
         style={{
           borderWidth: 1,
-          borderColor: colors.border,
+          borderColor: colors.borderStrong,
           borderRadius: 12,
           padding: 14,
           fontSize: 16,

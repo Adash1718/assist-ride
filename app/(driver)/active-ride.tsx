@@ -292,7 +292,7 @@ export default function ActiveRide() {
                     maxLength={4}
                     style={{
                       borderWidth: 1,
-                      borderColor: colors.border,
+                      borderColor: colors.borderStrong,
                       borderRadius: 12,
                       padding: 14,
                       fontSize: 20,

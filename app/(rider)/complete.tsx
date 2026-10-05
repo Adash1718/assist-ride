@@ -279,11 +279,12 @@ export default function RideComplete() {
                 value={comment}
                 onChangeText={setComment}
                 placeholder="Anything else you'd like to share? (optional)"
+                accessibilityLabel="Anything else about this ride (optional)"
                 placeholderTextColor={colors.textTertiary}
                 multiline
                 style={{
                   borderWidth: 1,
-                  borderColor: colors.border,
+                  borderColor: colors.borderStrong,
                   borderRadius: 12,
                   padding: 14,
                   fontSize: 15,
@@ -330,7 +331,7 @@ export default function RideComplete() {
                     multiline
                     style={{
                       borderWidth: 1,
-                      borderColor: colors.border,
+                      borderColor: colors.borderStrong,
                       borderRadius: 12,
                       padding: 14,
                       fontSize: 15,
